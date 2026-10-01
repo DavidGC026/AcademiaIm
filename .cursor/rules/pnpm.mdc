@@ -1,0 +1,35 @@
+---
+description: Usar pnpm como gestor de paquetes (no npm ni yarn)
+alwaysApply: true
+---
+
+# Gestor de paquetes: pnpm
+
+Este repositorio usa **pnpm** exclusivamente. No uses `npm` ni `yarn` para instalar dependencias, scripts ni despliegues.
+
+## Comandos habituales
+
+```bash
+pnpm install              # instalar dependencias
+pnpm add <pkg>              # dependencia de producción
+pnpm add -D <pkg>           # dependencia de desarrollo
+pnpm dev                    # servidor de desarrollo
+pnpm build                  # build de producción
+pnpm lint                   # eslint
+```
+
+## Reglas para agentes
+
+- Ejecuta `pnpm install` (no `npm install`) tras cambiar `package.json`.
+- Verifica con `pnpm build` antes de desplegar.
+- Mantén `pnpm-lock.yaml` commiteado; no generes `package-lock.json`.
+- En scripts del repo (`deploy.sh`, CI, SSH al servidor): usa `pnpm`, no `npm`.
+- Si añades dependencias: `pnpm add …` y actualiza el lockfile.
+
+## Despliegue
+
+`./deploy.sh` sincroniza el código y en el servidor corre `pnpm install --frozen-lockfile && pnpm build`.
+
+## Referencia
+
+Ver también `AGENTS.md` en la raíz del proyecto.
