@@ -1,0 +1,40 @@
+{
+  "name": "temp-app",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.4",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "lint": "eslint",
+    "postinstall": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs public/pdfjs/pdf.worker.min.mjs && cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs public/pdfjs/pdf.min.mjs && cp -r node_modules/pdfjs-dist/wasm public/pdfjs/"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "docx-preview": "^0.3.7",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.16.0",
+    "mysql2": "^3.22.3",
+    "next": "16.2.6",
+    "nodemailer": "^8.0.8",
+    "pdfjs-dist": "^6.0.227",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-pageflip": "^2.0.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20",
+    "@types/nodemailer": "^8.0.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
