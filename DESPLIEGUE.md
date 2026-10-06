@@ -88,10 +88,13 @@ El procedimiento realiza estos pasos:
    `ecosystem.config.cjs` vuelve a habilitarla. Esta opción no desactiva consultas
    explícitas a la base si se añadieran durante la generación de páginas.
 5. Respalda la aplicación completa y genera un volcado SQL consistente mediante
-   `mariadb-dump --single-transaction`, con rutinas, eventos y disparadores.
+   `mariadb-dump --single-transaction`, con rutinas, eventos y disparadores. Guarda
+   también la definición de este proceso PM2 en `pm2-app.json`.
 6. Conserva los assets estáticos del build anterior para las pestañas que sigan
    abiertas. Detiene únicamente `academia-lms`, sincroniza el código compilado y
-   activa la configuración de PM2. Hay una breve interrupción en este paso.
+   recrea su entrada PM2 con `ecosystem.config.cjs`. Hay una breve interrupción en
+   este paso. Recrear la entrada evita que PM2 conserve un lanzador anterior al
+   cambiar la ruta del ejecutable; los demás procesos se mantienen.
 7. Conserva `.env*`, `public/uploads`, `storage`, el log de correos simulados y
    cualquier `.git` existente. Los archivos de código obsoletos sí se eliminan.
 8. Comprueba la página y la API de sesión por el puerto interno y guarda PM2.
@@ -100,7 +103,7 @@ El procedimiento realiza estos pasos:
 El script solo anuncia éxito cuando terminan las comprobaciones. Si falla antes
 de activar, la aplicación actual sigue disponible. Si falla durante la
 activación o la comprobación interna, intenta restaurar automáticamente el código
-anterior y reiniciar el proceso. Un fallo en la comprobación pública se informa
+anterior, su definición PM2 y comprobar nuevamente el servicio. Un fallo en la comprobación pública se informa
 como error y requiere revisar Apache, DNS o TLS; no revierte una aplicación que
 ya pasó las comprobaciones internas.
 
@@ -162,7 +165,8 @@ Identifica el respaldo anunciado por el despliegue y sustituye la ruta de ejempl
 ssh root@servidor.example
 BACKUP_DIR=/var/backups/academia/academia-build-FECHA-COMMIT
 test -d "$BACKUP_DIR/app/.next"
-pm2 stop academia-lms
+test -s "$BACKUP_DIR/pm2-app.json"
+pm2 delete academia-lms
 rsync -ac --delete \
   --exclude='/.env*' \
   --exclude='/public/uploads/***' \
@@ -170,7 +174,7 @@ rsync -ac --delete \
   --exclude='/simulated_emails.log' \
   --exclude='/.git/***' \
   "$BACKUP_DIR/app/" /var/www/academia/
-pm2 restart academia-lms
+pm2 start "$BACKUP_DIR/pm2-app.json" --only academia-lms
 ```
 
 Vuelve a comprobar la aplicación y ejecuta `pm2 save` cuando esté sana. La copia

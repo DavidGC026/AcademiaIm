@@ -15,14 +15,28 @@ restore_needed=0
 exec 9>/var/lock/academia-deploy.lock
 flock -n 9 || { echo 'Ya hay otro despliegue de Academia en curso.' >&2; exit 1; }
 
+check_service() {
+  for attempt in {1..30}; do
+    if curl --fail --silent --max-time 5 --output /dev/null http://127.0.0.1:3005/Academia && \
+       curl --fail --silent --max-time 5 http://127.0.0.1:3005/Academia/api/auth/session | \
+         node -e 'let data="";process.stdin.on("data",chunk=>data+=chunk);process.stdin.on("end",()=>{try{if(JSON.parse(data).session!==null)process.exitCode=1}catch{process.exitCode=1}})'; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 rollback_on_error() {
   local status=$?
   trap - ERR
   if (( restore_needed )); then
     echo "Falló la activación; restaurando el código desde $backup_dir/app..." >&2
-    pm2 stop academia-lms || true
-    if rsync -ac --delete "${preserve[@]}" "$backup_dir/app/" "$app_dir/" && pm2 restart academia-lms; then
-      echo 'Código anterior restaurado. Revisa el servicio y los registros.' >&2
+    pm2 delete academia-lms || true
+    if rsync -ac --delete "${preserve[@]}" "$backup_dir/app/" "$app_dir/" && \
+       pm2 start "$backup_dir/pm2-app.json" --only academia-lms && check_service; then
+      pm2 save
+      echo 'Código y proceso anteriores restaurados; servicio verificado.' >&2
     else
       echo "La restauración requiere atención. Respaldo: $backup_dir" >&2
     fi
@@ -67,6 +81,22 @@ chmod 700 "$backup_dir"
 rsync -a -- "$app_dir/" "$backup_dir/app/"
 mariadb-dump --single-transaction --routines --events --triggers --databases "$database" > "$backup_dir/database.sql"
 test -s "$backup_dir/database.sql"
+pm2 jlist | node -e '
+  let data = "";
+  process.stdin.on("data", chunk => data += chunk);
+  process.stdin.on("end", () => {
+    const app = JSON.parse(data).find(app => app.name === "academia-lms");
+    if (!app) throw Error("No se encontró academia-lms para respaldar PM2");
+    const e = app.pm2_env;
+    process.stdout.write(JSON.stringify({ apps: [{
+      name: app.name, script: e.pm_exec_path, cwd: e.pm_cwd,
+      args: e.args || [], interpreter: e.exec_interpreter,
+      exec_mode: e.exec_mode, instances: e.instances || 1,
+      env: e.env, out_file: e.pm_out_log_path, error_file: e.pm_err_log_path,
+    }] }, null, 2));
+  });
+' > "$backup_dir/pm2-app.json"
+test -s "$backup_dir/pm2-app.json"
 
 # Conservar los assets que todavía puedan pedir pestañas abiertas del build previo.
 if [[ -d "$app_dir/.next/static" ]]; then
@@ -80,19 +110,12 @@ rsync -ac --delete "${preserve[@]}" "$build_dir/" "$app_dir/"
 chmod --reference="$backup_dir/app" "$app_dir"
 chown --reference="$backup_dir/app" "$app_dir"
 cd -- "$app_dir"
-pm2 startOrRestart ecosystem.config.cjs --only academia-lms --update-env
+# PM2 conserva pm_exec_path al reiniciar una definición existente. Recrear solo
+# esta entrada permite cambiar de lanzador sin reutilizar el comando anterior.
+pm2 delete academia-lms
+pm2 start ecosystem.config.cjs --only academia-lms
 
-healthy=0
-for attempt in {1..30}; do
-  if curl --fail --silent --max-time 5 --output /dev/null http://127.0.0.1:3005/Academia && \
-     curl --fail --silent --max-time 5 http://127.0.0.1:3005/Academia/api/auth/session | \
-       node -e 'let data="";process.stdin.on("data",chunk=>data+=chunk);process.stdin.on("end",()=>{try{if(JSON.parse(data).session!==null)process.exitCode=1}catch{process.exitCode=1}})'; then
-    healthy=1
-    break
-  fi
-  sleep 1
-done
-[[ $healthy == 1 ]]
+check_service
 pm2 save
 restore_needed=0
 echo "Servicio verificado. Commit: $revision. Respaldo: $backup_dir"
