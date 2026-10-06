@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useEffectEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
@@ -9,7 +9,6 @@ import {
   Clock, 
   CheckCircle, 
   XCircle, 
-  HelpCircle,
   Award,
   AlertTriangle
 } from 'lucide-react';
@@ -49,59 +48,47 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [correctAnswers, setCorrectAnswers] = useState<Record<number, number>>({});
+  const [hasSavedAnswers, setHasSavedAnswers] = useState(true);
+  const [retryEnabled, setRetryEnabled] = useState(false);
+  const sendingRef = useRef(false);
+  const [reload, setReload] = useState(0);
   
   // Timer states
   const [timeLeft, setTimeLeft] = useState<number>(0); // in seconds
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchExamDetails = async () => {
-    try {
-      const res = await fetch(`/api/examenes/${examId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setExam(data.exam);
-        setQuestions(data.preguntas);
-        
-        // Start timer if time limit exists
-        if (data.exam.limite_tiempo > 0) {
+  useEffect(() => {
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const res = await fetch(`/api/examenes/${examId}`, { signal: controller.signal });
+        if (res.ok) {
+          const data = await res.json();
+          setExam(data.exam);
+          setQuestions(data.preguntas);
+          const completed = data.mi_intento && !data.mi_intento.permite_reintento;
+          setSubmitted(Boolean(completed));
+          setRetryEnabled(Boolean(data.mi_intento?.permite_reintento));
+          setScore(completed ? data.mi_intento.calificacion : null);
+          setAnswers(completed ? data.mi_intento.respuestas || {} : {});
+          setHasSavedAnswers(!completed || data.mi_intento.respuestas !== null);
+          setCorrectAnswers(data.respuestasCorrectas || {});
           setTimeLeft(data.exam.limite_tiempo * 60);
+        } else {
+          setExam(null);
         }
-      } else {
-        console.error('Error al cargar examen');
+      } catch (error) {
+        if (!controller.signal.aborted) console.error('Error al cargar examen:', error);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
       }
-    } catch (e) {
-      console.error('Error del servidor', e);
-    } finally {
-      setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchExamDetails();
+    void load();
     return () => {
+      controller.abort();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [examId]);
-
-  // Handle timer countdown
-  useEffect(() => {
-    if (timeLeft > 0 && !submitted) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current!);
-            handleAutoSubmit();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [timeLeft, submitted]);
+  }, [examId, reload]);
 
   const handleSelectOption = (questionId: number, optionId: number) => {
     if (submitted) return;
@@ -112,7 +99,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   const submitExam = async (finalAnswers: Record<number, number>) => {
-    if (submitting || submitted) return;
+    if (sendingRef.current || submitted) return;
+    sendingRef.current = true;
     setSubmitting(true);
     if (timerRef.current) clearInterval(timerRef.current);
 
@@ -128,13 +116,18 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         setScore(data.calificacion);
         setCorrectAnswers(data.respuestasCorrectas);
         setSubmitted(true);
+        setHasSavedAnswers(true);
+        setRetryEnabled(false);
       } else {
-        alert('Error al calificar el examen');
+        const data = await res.json();
+        alert(data.error || 'Error al calificar el examen');
+        if (res.status === 409) setReload(value => value + 1);
       }
     } catch (error) {
       console.error('Error al enviar el examen:', error);
       alert('Error de conexión');
     } finally {
+      sendingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -152,10 +145,27 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     submitExam(answers);
   };
 
-  const handleAutoSubmit = () => {
+  const handleAutoSubmit = useEffectEvent(() => {
     alert('¡El tiempo se ha agotado! Tu examen será enviado automáticamente.');
-    submitExam(answers);
-  };
+    void submitExam(answers);
+  });
+
+  useEffect(() => {
+    if (timeLeft > 0 && !submitted && !submitting) {
+      timerRef.current = setInterval(() => {
+        if (timeLeft <= 1) {
+          clearInterval(timerRef.current!);
+          setTimeLeft(0);
+          handleAutoSubmit();
+        } else {
+          setTimeLeft(previous => previous - 1);
+        }
+      }, 1000);
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [timeLeft, submitted, submitting]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -201,6 +211,15 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         )}
       </div>
 
+      {retryEnabled && !submitted && (
+        <p role="status" className="card" style={{ marginBottom: '20px', color: '#0073A5' }}>
+          Tu maestro habilitó un nuevo intento. Al entregarlo se actualizará tu calificación y se conservará el resultado anterior.
+        </p>
+      )}
+      {submitted && !hasSavedAnswers && (
+        <p className="card" style={{ marginBottom: '20px' }}>Este intento conserva su calificación, pero no tiene respuestas guardadas. Para volver a responder, solicita un nuevo intento a tu maestro.</p>
+      )}
+
       {submitted && score !== null && (
         <div className="card" style={styles.resultCard}>
           <div style={styles.resultLeft}>
@@ -234,12 +253,12 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
                 className="card" 
                 style={{ 
                   ...styles.questionCard,
-                  ...(submitted ? (isQuestionCorrect ? styles.correctCardBorder : styles.incorrectCardBorder) : {})
+                  ...(submitted && hasSavedAnswers ? (isQuestionCorrect ? styles.correctCardBorder : styles.incorrectCardBorder) : {})
                 }}
               >
                 <div style={styles.questionHeader}>
                   <span style={styles.questionNumber}>Pregunta {qIdx + 1} de {questions.length}</span>
-                  {submitted && (
+                  {submitted && hasSavedAnswers && (
                     isQuestionCorrect ? (
                       <span style={{ ...styles.statusIndicator, color: 'var(--success)' }}>
                         <CheckCircle size={16} /> Correcto
@@ -265,21 +284,25 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
                     if (isOptionIncorrectAndSelected) optionStyle = { ...optionStyle, ...styles.optionIncorrect };
 
                     return (
-                      <div 
+                      <label
                         key={opt.id}
-                        onClick={() => handleSelectOption(q.id, opt.id)}
-                        style={optionStyle}
+                        style={{ ...optionStyle, cursor: submitted || submitting ? 'default' : 'pointer' }}
                       >
-                        <div style={styles.radioIndicator}>
-                          {isSelected && <div style={styles.radioDot} />}
-                        </div>
+                        <input
+                          type="radio"
+                          name={`pregunta-${q.id}`}
+                          checked={isSelected}
+                          disabled={submitted || submitting}
+                          onChange={() => handleSelectOption(q.id, opt.id)}
+                          style={{ accentColor: '#0073A5', flexShrink: 0 }}
+                        />
                         <span style={styles.optionText}>{opt.texto}</span>
                         {submitted && isOptionCorrect && (
                           <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--success)', fontWeight: 'bold' }}>
                             Respuesta Correcta
                           </span>
                         )}
-                      </div>
+                      </label>
                     );
                   })}
                 </div>

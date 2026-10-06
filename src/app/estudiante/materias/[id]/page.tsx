@@ -32,6 +32,7 @@ interface ExamItem {
   titulo: string;
   mi_calificacion: number | null;
   intento_fecha: string | null;
+  permite_reintento: number;
 }
 
 interface CursoDetail {
@@ -181,7 +182,7 @@ export default function MateriaDetailPage({ params }: { params: Promise<{ id: st
         ) : (
           <div style={styles.list}>
             {exams.map((ex) => {
-              const done = ex.intento_fecha != null || ex.mi_calificacion != null;
+              const done = !ex.permite_reintento && (ex.intento_fecha != null || ex.mi_calificacion != null);
               return (
                 <div
                   key={ex.id}
@@ -194,14 +195,14 @@ export default function MateriaDetailPage({ params }: { params: Promise<{ id: st
                   <FileText size={16} color="#0073A5" />
                   <div style={{ flex: 1 }}>
                     <div style={styles.rowTitle}>{ex.titulo}</div>
-                    {done && ex.mi_calificacion != null && (
-                      <div style={styles.rowDesc}>Calificación: {ex.mi_calificacion}%</div>
+                    {ex.mi_calificacion != null && (
+                      <div style={styles.rowDesc}>{ex.permite_reintento ? 'Calificación anterior' : 'Calificación'}: {ex.mi_calificacion}%</div>
                     )}
                   </div>
                   {done ? (
                     <CheckCircle size={18} color="#10B981" />
                   ) : (
-                    <span style={styles.badgePending}>Pendiente</span>
+                    <span style={styles.badgePending}>{ex.permite_reintento ? 'Nuevo intento habilitado' : 'Pendiente'}</span>
                   )}
                 </div>
               );

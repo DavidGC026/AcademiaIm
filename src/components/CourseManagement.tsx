@@ -1431,6 +1431,9 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                               </span>
                             </div>
                             <p style={styles.classDescText}>{ex.descripcion}</p>
+                            <Link href={`/${isAdmin ? 'admin' : 'maestro'}/examenes/${ex.id}`} className="btn btn-secondary" style={{ alignSelf: 'flex-start', marginTop: '12px' }}>
+                              Ver examen y resultados
+                            </Link>
                           </div>
                         ))
                       )}

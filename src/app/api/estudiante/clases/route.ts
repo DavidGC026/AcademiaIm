@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { ensureExamAttemptSchema } from '@/lib/examSchema';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
 
 export async function GET(request: Request) {
@@ -50,8 +51,10 @@ export async function GET(request: Request) {
       videos: typeof cls.videos === 'string' ? JSON.parse(cls.videos) : cls.videos || [],
     }));
 
+    await ensureExamAttemptSchema();
     const [examenes] = (await pool.execute(
-      `SELECT e.*, i.calificacion as mi_calificacion, i.finalizado_at as intento_fecha
+      `SELECT e.*, i.calificacion as mi_calificacion, i.finalizado_at as intento_fecha,
+              COALESCE(i.permite_reintento, 0) AS permite_reintento
        FROM examenes e
        LEFT JOIN intentos_examenes i ON e.id = i.examen_id AND i.usuario_id = ?
        WHERE e.curso_id = ?
@@ -64,7 +67,7 @@ export async function GET(request: Request) {
       if (cls.requiere_tarea === 1 && !cls.entrega_id) pendientes++;
     }
     for (const ex of examenes) {
-      if (!ex.intento_fecha && ex.mi_calificacion == null) pendientes++;
+      if (ex.permite_reintento || (!ex.intento_fecha && ex.mi_calificacion == null)) pendientes++;
     }
 
     const totalItems = classes.length + examenes.length;
@@ -77,7 +80,7 @@ export async function GET(request: Request) {
       }
     }
     for (const ex of examenes) {
-      if (ex.intento_fecha || ex.mi_calificacion != null) completados++;
+      if (!ex.permite_reintento && (ex.intento_fecha || ex.mi_calificacion != null)) completados++;
     }
 
     return NextResponse.json({

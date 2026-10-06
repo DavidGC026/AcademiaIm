@@ -60,7 +60,7 @@ function computeProgress(classes: ClassItem[], exams: ExamItem[]): ProgressStats
 
   for (const ex of exams) {
     total += 1;
-    if (ex.mi_calificacion !== null && ex.mi_calificacion !== undefined) {
+    if (!ex.permite_reintento && ex.mi_calificacion !== null && ex.mi_calificacion !== undefined) {
       done += 1;
     }
   }
@@ -141,6 +141,7 @@ interface ExamItem {
   limite_tiempo: number;
   mi_calificacion: number | null;
   intento_fecha: string | null;
+  permite_reintento: number;
 }
 
 export default function StudentDashboard() {

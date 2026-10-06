@@ -91,14 +91,17 @@ El procedimiento realiza estos pasos:
 5. Respalda la aplicación completa y genera un volcado SQL consistente mediante
    `mariadb-dump --single-transaction`, con rutinas, eventos y disparadores. Guarda
    también la definición de este proceso PM2 en `pm2-app.json`.
-6. Conserva los assets estáticos del build anterior para las pestañas que sigan
+6. Después del respaldo, agrega de forma idempotente las columnas de reintentos,
+   respuestas e historial mediante `scripts/migrate-exam-attempts.ts`. Conserva
+   las calificaciones y fechas existentes; no elimina filas ni crea exámenes.
+7. Conserva los assets estáticos del build anterior para las pestañas que sigan
    abiertas. Detiene únicamente `academia-lms`, sincroniza el código compilado y
    recrea su entrada PM2 con `ecosystem.config.cjs`. Hay una breve interrupción en
    este paso. Recrear la entrada evita que PM2 conserve un lanzador anterior al
    cambiar la ruta del ejecutable; los demás procesos se mantienen.
-7. Conserva `.env*`, `public/uploads`, `storage`, el log de correos simulados y
+8. Conserva `.env*`, `public/uploads`, `storage`, el log de correos simulados y
    cualquier `.git` existente. Los archivos de código obsoletos sí se eliminan.
-8. Comprueba la página y la API de sesión por el puerto interno y guarda PM2.
+9. Comprueba la página y la API de sesión por el puerto interno y guarda PM2.
    Si se indicó `DEPLOY_PUBLIC_URL`, comprueba también la URL pública por HTTPS.
 
 El script solo anuncia éxito cuando terminan las comprobaciones. Si falla antes
@@ -154,6 +157,12 @@ con `git rev-parse HEAD` de la copia local y de la revisión publicada en GitHub
 Abre la aplicación en el navegador y comprueba el inicio de sesión, las materias,
 los recursos existentes y la reproducción de videos. Un HTTP 200 en la portada
 no verifica por sí solo los flujos autenticados ni los permisos de Google Drive.
+En una materia del maestro, abre «Exámenes → Ver examen y resultados». Comprueba
+las preguntas y el listado de alumnos. Habilita intentos reales solo cuando el
+maestro lo solicite; las pruebas completas de reintentos usan una base aislada.
+La última nota sigue vigente hasta la nueva entrega, y la anterior pasa al historial.
+Los intentos de versiones anteriores conservan su nota aunque no tengan respuestas
+guardadas.
 
 Los exámenes con respuestas de referencia se guardan en
 `docs/referencias/examenes/`; no deben volver a colocarse en `public`.

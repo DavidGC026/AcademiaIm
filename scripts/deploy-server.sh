@@ -99,6 +99,9 @@ pm2 jlist | node -e '
 ' > "$backup_dir/pm2-app.json"
 test -s "$backup_dir/pm2-app.json"
 
+echo 'Actualizando el esquema de intentos tras respaldar la base...'
+ACADEMIA_SKIP_DB_INIT=1 node --env-file=.env.local --import tsx scripts/migrate-exam-attempts.ts
+
 # Conservar los assets que todavía puedan pedir pestañas abiertas del build previo.
 if [[ -d "$app_dir/.next/static" ]]; then
   rsync -a --ignore-existing -- "$app_dir/.next/static/" "$build_dir/.next/static/"

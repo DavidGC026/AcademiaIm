@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { ensureExamAttemptSchema } from '@/lib/examSchema';
 
 export async function GET(request: Request) {
   try {
@@ -16,8 +17,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Falta curso_id' }, { status: 400 });
     }
 
+    await ensureExamAttemptSchema();
     const [rows] = await pool.execute(
-      `SELECT e.*, i.calificacion as mi_calificacion, i.iniciado_at as intento_fecha
+      `SELECT e.*, i.calificacion as mi_calificacion, i.finalizado_at as intento_fecha,
+              COALESCE(i.permite_reintento, 0) AS permite_reintento
        FROM examenes e
        LEFT JOIN intentos_examenes i ON e.id = i.examen_id AND i.usuario_id = ?
        WHERE e.curso_id = ?

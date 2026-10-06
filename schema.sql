@@ -147,6 +147,9 @@ CREATE TABLE IF NOT EXISTS intentos_examenes (
     calificacion DECIMAL(5,2) DEFAULT NULL,
     iniciado_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     finalizado_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    permite_reintento TINYINT(1) NOT NULL DEFAULT 0,
+    respuestas JSON DEFAULT NULL,
+    historial JSON DEFAULT NULL,
     FOREIGN KEY (examen_id) REFERENCES examenes(id) ON DELETE CASCADE,
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
     UNIQUE KEY unica_intento (examen_id, usuario_id)
@@ -316,5 +319,4 @@ CREATE TABLE IF NOT EXISTS asistencias_clases (
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
     UNIQUE KEY unica_asistencia (evento_id, usuario_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 
