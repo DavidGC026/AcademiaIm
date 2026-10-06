@@ -1442,8 +1442,8 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                     <form onSubmit={handleImportExcelExam} style={styles.form}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '12px', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px' }}>
                         <div style={{ textAlign: 'left' }}>
-                          <strong style={{ color: '#10B981', fontSize: '14px', display: 'block' }}>Plantilla Oficial de Examen</strong>
-                          <span style={{ fontSize: '12px', color: '#64748B' }}>Descarga la plantilla y rellena tus preguntas antes de subirla.</span>
+                          <strong style={{ color: '#10B981', fontSize: '14px', display: 'block' }}>Importar examen desde Excel</strong>
+                          <span style={{ fontSize: '12px', color: '#64748B' }}>Puedes subir el formato de dos hojas PREGUNTAS y RESPUESTAS, como el examen M1, o usar la plantilla clásica.</span>
                         </div>
                         <a 
                           href={toAssetUrl('/plantilla_examen.xlsx')} 
@@ -1451,9 +1451,13 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                           className="btn btn-secondary"
                           style={{ padding: '6px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#FFFFFF' }}
                         >
-                          Descargar Plantilla Excel
+                          Descargar plantilla clásica
                         </a>
                       </div>
+
+                      <p style={{ fontSize: '12px', color: '#64748B', textAlign: 'left', marginBottom: '16px' }}>
+                        En el formato de dos hojas, sin encabezados: PREGUNTAS lleva número y pregunta; RESPUESTAS lleva número de pregunta, opción y clave (1 correcta, 0 incorrecta). Cada pregunta debe tener al menos dos opciones y una sola correcta. Se admiten opciones de verdadero/falso.
+                      </p>
 
                       <div className="form-group" style={{ textAlign: 'left' }}>
                         <label className="form-label">Título del Examen</label>

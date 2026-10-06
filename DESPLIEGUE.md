@@ -63,6 +63,7 @@ Desde la copia local del repositorio:
 ```bash
 git status --short
 pnpm test:videos
+pnpm test:exams
 git push origin main
 
 DEPLOY_SSH_TARGET=root@servidor.example \
@@ -82,7 +83,7 @@ El procedimiento realiza estos pasos:
    la configuración, la base local y el proceso PM2.
 3. Copia `.env.local` desde la aplicación activa al directorio temporal, instala
    con `corepack pnpm install --frozen-lockfile`, ejecuta las pruebas de videos y
-   compila con `ACADEMIA_SKIP_DB_INIT=1 corepack pnpm build`.
+   exámenes y compila con `ACADEMIA_SKIP_DB_INIT=1 corepack pnpm build`.
 4. Comprueba que el build corresponde a `/Academia`. Durante la compilación se
    omite la inicialización automática de la base; al ejecutar la aplicación,
    `ecosystem.config.cjs` vuelve a habilitarla. Esta opción no desactiva consultas

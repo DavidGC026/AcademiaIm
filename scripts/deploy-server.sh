@@ -69,6 +69,7 @@ umask 022
 echo 'Instalando dependencias y compilando fuera de la aplicación activa...'
 corepack pnpm install --frozen-lockfile
 corepack pnpm test:videos
+corepack pnpm test:exams
 ACADEMIA_SKIP_DB_INIT=1 corepack pnpm build
 node -e 'if (require("./.next/routes-manifest.json").basePath !== "/Academia") throw Error("Base path incorrecto en el build")'
 test -s .next/BUILD_ID
