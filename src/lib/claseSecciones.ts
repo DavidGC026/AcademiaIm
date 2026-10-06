@@ -1,7 +1,9 @@
 import { parseCssColor, resolveColor } from '@/lib/colorUtils';
+import { isSupportedVideoUrl } from '@/lib/videoEmbed';
 
 export type SeccionItem =
   | { tipo: 'archivo'; nombre: string; url: string; archivo_nombre?: string }
+  | { tipo: 'video'; titulo: string; url: string; archivo_nombre?: string }
   | { tipo: 'biblioteca'; libro_id: number }
   | { tipo: 'enlace'; titulo: string; url: string };
 
@@ -46,7 +48,15 @@ export function parseSecciones(raw: unknown): ClaseSeccion[] {
     .map((s, idx) => {
       if (!s || typeof s !== 'object') return null;
       const sec = s as Record<string, unknown>;
-      const items = Array.isArray(sec.items) ? (sec.items as SeccionItem[]).filter(Boolean) : [];
+      const items = Array.isArray(sec.items) ? (sec.items as SeccionItem[]).filter((item) => {
+        if (!item) return false;
+        return item.tipo !== 'video' || (typeof item.url === 'string' && isSupportedVideoUrl(item.url));
+      }).map((item) => item.tipo === 'video' ? {
+        tipo: 'video' as const,
+        titulo: typeof item.titulo === 'string' ? item.titulo.trim() || 'Video' : 'Video',
+        url: item.url.trim(),
+        ...(typeof item.archivo_nombre === 'string' ? { archivo_nombre: item.archivo_nombre } : {}),
+      } : item) : [];
       return {
         id: String(sec.id || newSeccionId()),
         nombre: String(sec.nombre || `Sección ${idx + 1}`).trim() || `Sección ${idx + 1}`,
@@ -158,6 +168,7 @@ export function serializeSecciones(secciones: ClaseSeccion[]): ClaseSeccion[] {
       ...(s.permite_descarga === false ? { permite_descarga: false as const } : {}),
       items: s.items.filter((item) => {
         if (item.tipo === 'biblioteca') return !!item.libro_id;
+        if (item.tipo === 'video') return isSupportedVideoUrl(item.url);
         if (item.tipo === 'enlace') return !!item.url?.trim();
         return !!item.url?.trim();
       }),

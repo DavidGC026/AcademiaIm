@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useLayoutEffect, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
-import { BookOpen, Download, ExternalLink, FileText, Link2, X } from 'lucide-react';
+import { BookOpen, Download, ExternalLink, FileText, Link2, Video, X } from 'lucide-react';
+import VideoEmbed from '@/components/VideoEmbed';
 import { getFileExt } from '@/components/FileResourcePreview';
 import { toAbsoluteAssetUrl, toBibliotecaContenidoUrl } from '@/lib/assetUrl';
 import { withAlpha } from '@/lib/colorUtils';
@@ -23,7 +24,8 @@ interface Props {
 interface ResolvedItem {
   key: string;
   label: string;
-  icon: 'pdf' | 'libro' | 'enlace' | 'archivo';
+  icon: 'pdf' | 'libro' | 'enlace' | 'archivo' | 'video';
+  videoUrl?: string;
   pdfUrl?: string;
   linkUrl?: string;
   downloadUrl?: string;
@@ -31,6 +33,13 @@ interface ResolvedItem {
 }
 
 function resolveItem(item: SeccionItemEnriquecido, idx: number, accesoPrioritario: boolean): ResolvedItem {
+  if (item.tipo === 'video') {
+    return {
+      key: `v${idx}`, label: item.titulo || 'Video', icon: 'video', videoUrl: item.url,
+      downloadUrl: item.archivo_nombre ? toAbsoluteAssetUrl(item.url) : undefined,
+      downloadName: item.archivo_nombre,
+    };
+  }
   if (item.tipo === 'enlace') {
     return { key: `l${idx}`, label: item.titulo, icon: 'enlace', linkUrl: item.url };
   }
@@ -78,22 +87,15 @@ export default function SeccionFullscreenGallery({
   onClose,
 }: Props) {
   const [active, setActive] = useState(0);
-  const [viewerH, setViewerH] = useState(640);
-  const [mounted, setMounted] = useState(false);
-
-  useLayoutEffect(() => {
-    setMounted(true);
-  }, []);
+  const [viewerH, setViewerH] = useState(() => typeof window === 'undefined' ? 640 : Math.max(280, window.innerHeight - 140));
 
   useEffect(() => {
-    if (!mounted) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     const update = () => setViewerH(Math.max(280, window.innerHeight - 140));
-    update();
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', update);
     return () => {
@@ -101,9 +103,9 @@ export default function SeccionFullscreenGallery({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', update);
     };
-  }, [mounted, onClose]);
+  }, [onClose]);
 
-  if (!mounted) return null;
+  if (typeof document === 'undefined') return null;
 
   const resolved = items.map((it, i) => resolveItem(it, i, accesoPrioritario));
   const current = resolved[active] ?? resolved[0];
@@ -112,6 +114,7 @@ export default function SeccionFullscreenGallery({
   const iconFor = (icon: ResolvedItem['icon']) => {
     if (icon === 'libro') return <BookOpen size={16} />;
     if (icon === 'enlace') return <Link2 size={16} />;
+    if (icon === 'video') return <Video size={16} />;
     return <FileText size={16} />;
   };
 
@@ -177,7 +180,11 @@ export default function SeccionFullscreenGallery({
         )}
 
         <main className="seccion-gallery-main">
-          {current?.pdfUrl ? (
+          {current?.videoUrl ? (
+            <div style={{ position: 'relative', width: '100%', height: viewerH, background: '#000' }}>
+              <VideoEmbed key={current.key} url={current.videoUrl} title={current.label} allowDownload={permiteDescarga} />
+            </div>
+          ) : current?.pdfUrl ? (
             <SecurePdfViewer
               key={current.key}
               fileUrl={current.pdfUrl}

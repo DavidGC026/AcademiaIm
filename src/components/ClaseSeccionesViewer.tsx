@@ -1,21 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import dynamic from 'next/dynamic';
-import { BookOpen, Download, ExternalLink, Eye, FileText, Link2, Maximize2, Paperclip } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { BookOpen, Download, ExternalLink, Eye, FileText, Link2, Maximize2, Paperclip, Video } from 'lucide-react';
 import FileResourcePreview from '@/components/FileResourcePreview';
 import ReferenciaViewer, { type ReferenciaItem } from '@/components/ReferenciaViewer';
 import SeccionItemsCarousel from '@/components/SeccionItemsCarousel';
 import SeccionFullscreenGallery from '@/components/SeccionFullscreenGallery';
-import { type ClaseSeccion } from '@/lib/claseSecciones';
+import VideoEmbed from '@/components/VideoEmbed';
+import { type ClaseSeccion, type SeccionItem } from '@/lib/claseSecciones';
 import { normalizeSeccionColor } from '@/lib/claseSecciones';
 import { withAlpha } from '@/lib/colorUtils';
 import { toAbsoluteAssetUrl } from '@/lib/assetUrl';
 
 export type SeccionItemEnriquecido =
-  | { tipo: 'archivo'; nombre: string; url: string; archivo_nombre?: string }
-  | { tipo: 'enlace'; titulo: string; url: string }
+  | Exclude<SeccionItem, { tipo: 'biblioteca' }>
   | ({ tipo: 'biblioteca' } & ReferenciaItem & { tipo: 'biblioteca' });
 
 export type ClaseSeccionEnriquecida = Omit<ClaseSeccion, 'items'> & {
@@ -28,7 +26,7 @@ interface Props {
 }
 
 function itemLabel(item: SeccionItemEnriquecido): string {
-  if (item.tipo === 'enlace') return item.titulo;
+  if (item.tipo === 'enlace' || item.tipo === 'video') return item.titulo;
   if (item.tipo === 'biblioteca') return (item as ReferenciaItem).titulo || 'Libro';
   return item.nombre;
 }
@@ -38,8 +36,27 @@ function renderItemSlide(
   idx: number,
   color: string,
   accesoPrioritario: boolean,
-  permiteDescarga: boolean
+  permiteDescarga: boolean,
+  suspendVideos: boolean
 ) {
+  if (item.tipo === 'video') {
+    return (
+      <div key={idx} style={{ border: `1px solid ${withAlpha(color, 0.25)}`, borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', color, fontSize: '14px', fontWeight: 600 }}>
+          <Video size={16} />
+          <span style={{ flex: 1, minWidth: 0 }}>{item.titulo || 'Video'}</span>
+          {permiteDescarga && item.archivo_nombre && (
+            <a href={toAbsoluteAssetUrl(item.url)} download={item.archivo_nombre} aria-label={`Descargar ${item.titulo || 'video'}`} style={{ color, display: 'flex' }}>
+              <Download size={16} />
+            </a>
+          )}
+        </div>
+        <div style={{ position: 'relative', aspectRatio: '16 / 9', minHeight: '200px', background: '#000' }}>
+          {!suspendVideos && <VideoEmbed url={item.url} title={item.titulo || 'Video'} allowDownload={permiteDescarga} iframeStyle={{ position: 'absolute', inset: 0 }} videoStyle={{ position: 'absolute', inset: 0 }} />}
+        </div>
+      </div>
+    );
+  }
   if (item.tipo === 'biblioteca') {
     return (
       <ReferenciaViewer
@@ -160,7 +177,7 @@ function MobileResourceList({
               color: '#334155',
             }}
           >
-            {item.tipo === 'biblioteca' ? <BookOpen size={16} color={color} /> : item.tipo === 'enlace' ? <Link2 size={16} color={color} /> : <FileText size={16} color={color} />}
+            {item.tipo === 'biblioteca' ? <BookOpen size={16} color={color} /> : item.tipo === 'video' ? <Video size={16} color={color} /> : item.tipo === 'enlace' ? <Link2 size={16} color={color} /> : <FileText size={16} color={color} />}
             <span style={{ flex: 1, minWidth: 0, lineHeight: 1.35 }}>{itemLabel(item)}</span>
           </li>
         ))}
@@ -211,7 +228,7 @@ export default function ClaseSeccionesViewer({ secciones, accesoPrioritario = fa
         if (sec.items.length === 0) return null;
 
         const slides = sec.items.map((item, idx) =>
-          renderItemSlide(item, idx, color, accesoPrioritario, permiteDescarga)
+          renderItemSlide(item, idx, color, accesoPrioritario, permiteDescarga, fullscreen !== null)
         );
 
         return (

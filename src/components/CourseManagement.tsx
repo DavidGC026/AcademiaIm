@@ -157,6 +157,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [tareaRecursoUploading, setTareaRecursoUploading] = useState(false);
   const [bibliotecaLibros, setBibliotecaLibros] = useState<{ id: number; titulo: string; autor: string }[]>([]);
   const [classSecciones, setClassSecciones] = useState<ClaseSeccion[]>(defaultSecciones());
+  const [seccionesUploading, setSeccionesUploading] = useState(false);
   const [classLoading, setClassLoading] = useState(false);
   // Exámenes
   const [exams, setExams] = useState<{ id: number; titulo: string; descripcion: string; limite_tiempo: number }[]>([]);
@@ -460,7 +461,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
   const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClassTitle.trim() || !selectedCourse) return;
+    if (!newClassTitle.trim() || !selectedCourse || seccionesUploading) return;
     setClassError('');
     // Incluir un video pendiente en los inputs aunque no se haya pulsado "Agregar".
     const videosToSend = contenidoCentral === 'video' ? [...classVideos] : [];
@@ -866,15 +867,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
     editCourseImagen !== (selectedCourse.imagen || '') ||
     hasGroupChanges
   ));
-  const workspaceBusy = courseLoading || courseDetailsSaving || classLoading || examLoading || importLoading || gruposSaveLoading || presentacionUploading || tareaRecursoUploading;
+  const workspaceBusy = courseLoading || courseDetailsSaving || classLoading || examLoading || importLoading || gruposSaveLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading;
   const confirmLeave = () => !hasUnsavedChanges || confirm('Tienes cambios sin guardar en esta materia. ¿Quieres descartarlos y continuar?');
 
   useEffect(() => {
-    if (!hasUnsavedChanges) return;
+    if (!hasUnsavedChanges && !seccionesUploading) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, seccionesUploading]);
 
   // La URL controla la vista; el layout conserva los borradores al usar Atrás/Adelante.
   const syncCourseFromRoute = useEffectEvent(() => {
@@ -1361,10 +1362,11 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
                     <details className="teacher-resources">
                       <summary>Recursos y secciones de apoyo <span>Opcional</span></summary>
-                      <p>Agrega lecturas, referencias y archivos para acompañar la clase.</p>
+                      <p>Agrega videos, lecturas, referencias y archivos para acompañar la clase.</p>
                     <ClaseSeccionesEditor
                       secciones={classSecciones}
                       onChange={(secciones) => { setClassSecciones(secciones); setClassFormDirty(true); }}
+                      onUploadingChange={setSeccionesUploading}
                       libros={bibliotecaLibros}
                       copyFromClasses={classes
                         .filter((c) => c.id !== editingClassId)
@@ -1379,14 +1381,14 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
                     </details>
                     <div className="teacher-form-actions">
-                      <button type="submit" className="btn btn-primary" disabled={classLoading || presentacionUploading || tareaRecursoUploading}>
+                      <button type="submit" className="btn btn-primary" disabled={classLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading}>
                         {classLoading ? 'Guardando...' : editingClassId ? (
                           <><Check size={16} /> Guardar cambios</>
                         ) : (
                           <><Plus size={16} /> Crear Clase</>
                         )}
                       </button>
-                      <button type="button" className="btn btn-secondary" disabled={classLoading || presentacionUploading || tareaRecursoUploading} onClick={() => { if (confirmLeave()) { resetClassForm(); editorInitialized.current = null; router.push(coursePath(basePath, selectedCourse.id, 'clases')); } }}>
+                      <button type="button" className="btn btn-secondary" disabled={classLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading} onClick={() => { if (confirmLeave()) { resetClassForm(); editorInitialized.current = null; router.push(coursePath(basePath, selectedCourse.id, 'clases')); } }}>
                           Cancelar
                         </button>
                     </div>

@@ -1,28 +1,36 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { ExternalLink, Video } from 'lucide-react';
 import { getDriveProxyUrl, resolveVideoSource } from '@/lib/videoEmbed';
 
 interface VideoEmbedProps {
   url: string;
+  title?: string;
+  allowDownload?: boolean;
   iframeStyle?: React.CSSProperties;
   videoStyle?: React.CSSProperties;
   fallbackStyle?: React.CSSProperties;
 }
 
-export default function VideoEmbed({ url, iframeStyle, videoStyle, fallbackStyle }: VideoEmbedProps) {
-  const [failed, setFailed] = useState(false);
-  const source = useMemo(() => resolveVideoSource(url), [url]);
+export default function VideoEmbed({ url, title = 'Video de la clase', allowDownload = true, iframeStyle, videoStyle, fallbackStyle }: VideoEmbedProps) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const source = resolveVideoSource(url);
+  const failed = failedUrl === url;
 
-  if (source.type === 'youtube') {
+  if (source.type === 'youtube' || (source.type === 'drive' && failed)) {
+    const preview = source.type === 'drive' ? new URL(`https://drive.google.com/file/d/${source.driveId}/preview`) : null;
+    if (preview && source.driveResourceKey) preview.searchParams.set('resourcekey', source.driveResourceKey);
     return (
       <iframe
-        src={source.youtubeEmbed}
-        style={iframeStyle}
+        key={url}
+        src={source.youtubeEmbed || preview!.toString()}
+        style={{ width: '100%', height: '100%', border: 0, ...iframeStyle }}
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
         allowFullScreen
-        title="Video de la clase"
+        loading="lazy"
+        referrerPolicy="strict-origin-when-cross-origin"
+        title={title}
       />
     );
   }
@@ -35,11 +43,9 @@ export default function VideoEmbed({ url, iframeStyle, videoStyle, fallbackStyle
           No se pudo reproducir el video aquí
         </p>
         <p style={{ fontSize: '12px', color: '#64748B', margin: '0 0 12px', lineHeight: 1.4, maxWidth: '320px', textAlign: 'center' }}>
-          {source.type === 'drive'
-            ? 'El archivo en Google Drive debe estar compartido como "Cualquier persona con el enlace".'
-            : 'Prueba abrirlo en una pestaña nueva.'}
+          Prueba abrirlo en una pestaña nueva o revisa que el archivo sea un video compatible.
         </p>
-        <a href={url} target="_blank" rel="noreferrer" style={openLink}>
+        <a href={source.directUrl || url} target="_blank" rel="noreferrer" style={openLink}>
           <ExternalLink size={14} />
           Abrir video
         </a>
@@ -47,16 +53,19 @@ export default function VideoEmbed({ url, iframeStyle, videoStyle, fallbackStyle
     );
   }
 
-  const src = source.type === 'drive' ? getDriveProxyUrl(source.driveId!) : source.directUrl!;
+  const src = source.type === 'drive' ? getDriveProxyUrl(source.driveId!, source.driveResourceKey) : source.directUrl!;
 
   return (
     <video
       key={src}
       src={src}
       controls
+      controlsList={allowDownload ? undefined : 'nodownload'}
+      preload="metadata"
       playsInline
-      style={videoStyle}
-      onError={() => setFailed(true)}
+      aria-label={title}
+      style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000', ...videoStyle }}
+      onError={() => setFailedUrl(url)}
     />
   );
 }

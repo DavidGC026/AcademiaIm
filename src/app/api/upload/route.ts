@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { mkdir, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { mkdir, unlink } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { extname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { isVideoFile, MAX_VIDEO_SIZE_BYTES, MAX_VIDEO_SIZE_MB, validateVideoFile } from '@/lib/videoFiles';
 
 export async function POST(request: Request) {
   try {
@@ -10,27 +15,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
+    const videoRequested = new URL(request.url).searchParams.get('tipo') === 'video';
+    if (videoRequested && Number(request.headers.get('Content-Length')) > MAX_VIDEO_SIZE_BYTES + 1024 * 1024) {
+      return NextResponse.json({ error: `El video supera los ${MAX_VIDEO_SIZE_MB} MB.` }, { status: 413 });
+    }
     const formData = await request.formData();
-    const file = formData.get('file') as File | null;
+    const file = formData.get('file');
 
-    if (!file) {
+    if (!(file instanceof File)) {
       return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    if (videoRequested || isVideoFile(file.name) || file.type.startsWith('video/')) {
+      const error = validateVideoFile(file);
+      if (error) return NextResponse.json({ error }, { status: file.size > MAX_VIDEO_SIZE_BYTES ? 413 : 400 });
+    }
 
     // Asegurar directorio public/uploads
     const uploadDir = join(process.cwd(), 'public', 'uploads');
     await mkdir(uploadDir, { recursive: true });
 
     // Nombre único
-    const fileExtension = file.name.split('.').pop();
-    const uniqueFileName = `recurso-${Date.now()}.${fileExtension}`;
+    const extension = extname(file.name).toLowerCase();
+    const uniqueFileName = `recurso-${randomUUID()}${/^\.[a-z0-9]+$/.test(extension) ? extension : ''}`;
     const filePath = join(uploadDir, uniqueFileName);
 
-    await writeFile(filePath, buffer);
-    await access(filePath);
+    try {
+      await pipeline(Readable.fromWeb(file.stream() as import('node:stream/web').ReadableStream), createWriteStream(filePath, { flags: 'wx' }));
+    } catch (error) {
+      await unlink(filePath).catch(() => {});
+      throw error;
+    }
 
     const fileUrl = `/uploads/${uniqueFileName}`;
 
@@ -39,7 +54,7 @@ export async function POST(request: Request) {
       name: file.name,
       url: fileUrl,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error al subir recurso:', error);
     return NextResponse.json({ error: 'Error del servidor al subir el archivo' }, { status: 500 });
   }

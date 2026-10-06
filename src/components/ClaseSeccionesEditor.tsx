@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -12,6 +12,7 @@ import {
   Trash2,
   BookOpen,
   Copy,
+  Video,
 } from 'lucide-react';
 import SeccionItemsCarousel from '@/components/SeccionItemsCarousel';
 import {
@@ -25,6 +26,8 @@ import {
   mergeClonedSecciones,
 } from '@/lib/claseSecciones';
 import { toColorPickerValue } from '@/lib/colorUtils';
+import { isSupportedVideoUrl } from '@/lib/videoEmbed';
+import { MAX_VIDEO_SIZE_MB, VIDEO_ACCEPT, validateVideoFile } from '@/lib/videoFiles';
 
 interface LibroOption {
   id: number;
@@ -44,6 +47,7 @@ interface Props {
   libros: LibroOption[];
   /** Otras clases del mismo curso con secciones para copiar. */
   copyFromClasses?: CopySourceClass[];
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 function updateSection(
@@ -54,12 +58,23 @@ function updateSection(
   return secciones.map((s) => (s.id === id ? { ...s, ...patch } : s));
 }
 
-export default function ClaseSeccionesEditor({ secciones, onChange, libros, copyFromClasses = [] }: Props) {
+export default function ClaseSeccionesEditor({ secciones, onChange, libros, copyFromClasses = [], onUploadingChange }: Props) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [linkDraft, setLinkDraft] = useState<Record<string, { titulo: string; url: string }>>({});
+  const [videoDraft, setVideoDraft] = useState<Record<string, { titulo: string; url: string }>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const currentProps = useRef({ secciones, onChange });
+  const uploadAbort = useRef<AbortController | null>(null);
   const [copyClassId, setCopyClassId] = useState('');
   const [copyMode, setCopyMode] = useState<'append' | 'replace'>('append');
   const [showCopyPanel, setShowCopyPanel] = useState(false);
+
+  useEffect(() => { currentProps.current = { secciones, onChange }; }, [secciones, onChange]);
+  useEffect(() => () => {
+    uploadAbort.current?.abort();
+    uploadAbort.current = null;
+    onUploadingChange?.(false);
+  }, [onUploadingChange]);
 
   const sourcesWithSections = copyFromClasses.filter((c) => c.secciones.length > 0);
 
@@ -88,32 +103,51 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
     if (secciones.length === 0) onChange(defaultSecciones());
   };
 
-  const uploadFile = async (sectionId: string, file: File) => {
+  const uploadFile = async (sectionId: string, file: File, video = false) => {
+    if (uploadAbort.current) return;
+    const validationError = video ? validateVideoFile(file) : null;
+    setErrors((prev) => ({ ...prev, [sectionId]: validationError || '' }));
+    if (validationError) return;
+    const controller = new AbortController();
+    uploadAbort.current = controller;
     setUploading(sectionId);
+    onUploadingChange?.(true);
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
+      const res = await fetch(video ? '/api/upload?tipo=video' : '/api/upload', { method: 'POST', body: formData, signal: controller.signal });
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.url) {
-        const item: SeccionItem = {
+        const item: SeccionItem = video ? {
+          tipo: 'video',
+          titulo: videoDraft[sectionId]?.titulo.trim() || file.name,
+          url: data.url,
+          archivo_nombre: data.name || file.name,
+        } : {
           tipo: 'archivo',
           nombre: data.name || file.name,
           url: data.url,
           archivo_nombre: data.name || file.name,
         };
-        onChange(
-          updateSection(secciones, sectionId, {
-            items: [...(secciones.find((s) => s.id === sectionId)?.items || []), item],
+        const current = currentProps.current;
+        const section = current.secciones.find((s) => s.id === sectionId);
+        if (!section || controller.signal.aborted) return;
+        current.onChange(
+          updateSection(current.secciones, sectionId, {
+            items: [...section.items, item],
           })
         );
       } else {
-        alert(data.error || 'Error al subir archivo');
+        setErrors((prev) => ({ ...prev, [sectionId]: data.error || (res.status === 413 ? 'El servidor rechazó el tamaño del archivo. Usa un enlace de YouTube o Google Drive.' : 'Error al subir el archivo.') }));
       }
     } catch {
-      alert('Error de conexión al subir');
+      if (!controller.signal.aborted) setErrors((prev) => ({ ...prev, [sectionId]: 'No se pudo subir el archivo. Revisa la conexión e inténtalo de nuevo.' }));
     } finally {
-      setUploading(null);
+      if (uploadAbort.current === controller) {
+        uploadAbort.current = null;
+        setUploading(null);
+        onUploadingChange?.(false);
+      }
     }
   };
 
@@ -151,6 +185,21 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
       })
     );
     setLinkDraft((prev) => ({ ...prev, [sectionId]: { titulo: '', url: '' } }));
+  };
+
+  const addVideo = (sectionId: string) => {
+    const draft = videoDraft[sectionId] || { titulo: '', url: '' };
+    if (!isSupportedVideoUrl(draft.url)) {
+      setErrors((prev) => ({ ...prev, [sectionId]: 'Usa un enlace de video de YouTube, Google Drive o un archivo MP4, WebM u OGV.' }));
+      return;
+    }
+    const section = secciones.find((s) => s.id === sectionId);
+    if (!section) return;
+    onChange(updateSection(secciones, sectionId, {
+      items: [...section.items, { tipo: 'video', titulo: draft.titulo.trim() || 'Video', url: draft.url.trim() }],
+    }));
+    setErrors((prev) => ({ ...prev, [sectionId]: '' }));
+    setVideoDraft((prev) => ({ ...prev, [sectionId]: { titulo: '', url: '' } }));
   };
 
   if (secciones.length === 0) {
@@ -251,7 +300,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
                   Reemplazar actuales
                 </label>
               </div>
-              <button type="button" className="btn btn-primary" style={{ fontSize: '12px' }} onClick={handleCopySections}>
+              <button type="button" className="btn btn-primary" style={{ fontSize: '12px' }} onClick={handleCopySections} disabled={uploading !== null}>
                 <Copy size={14} /> Copiar secciones
               </button>
             </div>
@@ -262,6 +311,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
       {secciones.map((sec, secIdx) => {
         const color = normalizeSeccionColor(sec.color, '#0073A5');
         const draft = linkDraft[sec.id] || { titulo: '', url: '' };
+        const video = videoDraft[sec.id] || { titulo: '', url: '' };
         const libroIds = sec.items
           .filter((i): i is Extract<SeccionItem, { tipo: 'biblioteca' }> => i.tipo === 'biblioteca')
           .map((i) => i.libro_id);
@@ -322,6 +372,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
               <button
                 type="button"
                 onClick={() => onChange(secciones.filter((s) => s.id !== sec.id))}
+                disabled={uploading === sec.id}
                 style={{ ...styles.iconBtn, color: 'var(--danger)' }}
                 title="Eliminar sección"
               >
@@ -351,9 +402,9 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
                           {libros.find((l) => l.id === item.libro_id)?.titulo || `Libro #${item.libro_id}`}
                         </span>
                       </>
-                    ) : item.tipo === 'enlace' ? (
+                    ) : item.tipo === 'video' || item.tipo === 'enlace' ? (
                       <>
-                        <Link2 size={14} color={color} />
+                        {item.tipo === 'video' ? <Video size={14} color={color} /> : <Link2 size={14} color={color} />}
                         <span style={{ flex: 1, minWidth: 0, fontSize: '13px' }}>{item.titulo}</span>
                       </>
                     ) : (
@@ -384,7 +435,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
                   type="file"
                   accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx"
                   style={{ display: 'none' }}
-                  disabled={uploading === sec.id}
+                  disabled={uploading !== null}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) uploadFile(sec.id, f);
@@ -393,6 +444,55 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
                 />
               </label>
             </div>
+
+            <fieldset style={styles.videoPanel}>
+              <legend style={{ fontSize: '13px', fontWeight: 700, color, padding: '0 6px' }}>
+                <Video size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} /> Agregar video
+              </legend>
+              <div style={styles.linkRow}>
+                <input
+                  type="text"
+                  className="form-input"
+                  aria-label={`Título del video en ${sec.nombre}`}
+                  placeholder="Título del video (opcional)"
+                  value={video.titulo}
+                  onChange={(e) => setVideoDraft((prev) => ({ ...prev, [sec.id]: { ...video, titulo: e.target.value } }))}
+                  style={{ flex: '1 1 180px', minWidth: 0, fontSize: '12px' }}
+                />
+                <input
+                  type="url"
+                  className="form-input"
+                  aria-label={`URL del video en ${sec.nombre}`}
+                  placeholder="Enlace de YouTube, Google Drive o video"
+                  value={video.url}
+                  onChange={(e) => setVideoDraft((prev) => ({ ...prev, [sec.id]: { ...video, url: e.target.value } }))}
+                  style={{ flex: '2 1 240px', minWidth: 0, fontSize: '12px' }}
+                />
+                <button type="button" className="btn btn-secondary" style={{ fontSize: '12px' }} onClick={() => addVideo(sec.id)} disabled={!video.url.trim()}>
+                  <Plus size={14} /> Agregar video
+                </button>
+              </div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginTop: '12px', color: '#475569' }}>
+                O subir un video desde tu equipo
+                <input
+                  type="file"
+                  accept={VIDEO_ACCEPT}
+                  aria-label={`Subir video en ${sec.nombre}`}
+                  disabled={uploading !== null}
+                  style={{ display: 'block', width: '100%', marginTop: '6px', fontSize: '12px' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadFile(sec.id, file, true);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              <p style={{ fontSize: '12px', color: '#64748B', margin: '10px 0 0', lineHeight: 1.5 }}>
+                MP4, WebM u OGV, hasta {MAX_VIDEO_SIZE_MB} MB. En Google Drive, comparte el video como «Cualquier persona con el enlace».
+              </p>
+            </fieldset>
+            {uploading === sec.id && <p role="status" style={{ fontSize: '12px', color }}>Subiendo archivo… Espera a que termine para guardar la clase.</p>}
+            {errors[sec.id] && <p role="alert" style={{ fontSize: '12px', color: '#B91C1C' }}>{errors[sec.id]}</p>}
 
             {libros.length > 0 && (
               <details style={styles.librosDetails}>
@@ -553,6 +653,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   addRow: { marginBottom: '10px' },
+  videoPanel: { minWidth: 0, margin: '0 0 12px', padding: '12px', border: '1px solid var(--border)', borderRadius: '10px', backgroundColor: '#F8FAFC' },
   uploadLabel: {
     display: 'inline-flex',
     alignItems: 'center',
