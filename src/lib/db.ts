@@ -449,8 +449,8 @@ export async function initDb() {
   }
 }
 
-// Inicializar base de datos de manera asíncrona al cargar el módulo en el servidor
-if (typeof window === 'undefined') {
+// La compilación puede omitir migraciones; el proceso de la aplicación sí las ejecuta.
+if (typeof window === 'undefined' && process.env.ACADEMIA_SKIP_DB_INIT !== '1') {
   initDb().catch(err => {
     console.error('Error al inicializar la base de datos automáticamente:', err);
   });
