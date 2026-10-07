@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, CheckCircle, RotateCcw } from 'lucide-react';
 import type { ExamDetails, ExamQuestion, ExamStudentResult } from '@/lib/examTypes';
 import styles from './ExamManagement.module.css';
+import ExamReleaseSettings from './ExamReleaseSettings';
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
@@ -31,6 +32,7 @@ function Questions({ questions, answers }: { questions: ExamQuestion[]; answers?
 export default function ExamManagement({ examId, role }: { examId: string; role: 'maestro' | 'administrador' }) {
   const [exam, setExam] = useState<ExamDetails | null>(null);
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
+  const [taskClasses, setTaskClasses] = useState<{ id: number; titulo: string }[]>([]);
   const [students, setStudents] = useState<ExamStudentResult[]>([]);
   const [tab, setTab] = useState<'preguntas' | 'resultados'>('preguntas');
   const [loading, setLoading] = useState(true);
@@ -57,6 +59,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
         if (!responses[0].ok || !responses[1].ok) throw new Error(detail.error || results.error || 'No se pudo cargar el examen.');
         setExam(detail.exam);
         setQuestions(detail.preguntas);
+        setTaskClasses(detail.clases_con_tarea || []);
         setStudents(results.alumnos);
       } catch (error) {
         if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'No se pudo cargar el examen.');
@@ -84,8 +87,8 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo habilitar el intento.');
-      setStudents(current => current.map(row => row.alumno_id === student.alumno_id ? { ...row, permite_reintento: true } : row));
-      setNotice(`Nuevo intento habilitado para ${student.nombre}. El alumno puede volver a abrir el examen.`);
+      setStudents(current => current.map(row => row.alumno_id === student.alumno_id ? { ...row, permite_reintento: true, disponible: data.disponible, motivo_bloqueo: data.motivo_bloqueo } : row));
+      setNotice(`Nuevo intento autorizado para ${student.nombre}. ${data.disponible ? 'El alumno puede volver a abrir el examen.' : data.motivo_bloqueo}`);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo habilitar el intento.');
     } finally {
@@ -111,6 +114,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
         {exam.descripcion && <p>{exam.descripcion}</p>}
         <div className={styles.meta}><span>{questions.length} preguntas</span><span>{exam.limite_tiempo > 0 ? `${exam.limite_tiempo} minutos` : 'Sin límite de tiempo'}</span></div>
       </header>
+      <ExamReleaseSettings key={`${exam.id}-${exam.modo_liberacion}-${exam.clase_requisito_id}`} exam={exam} classes={taskClasses} onSaved={message => { setNotice(message); setReload(value => value + 1); }} />
       <div className={styles.tabs} role="group" aria-label="Vista del examen">
         <button type="button" aria-pressed={tab === 'preguntas'} onClick={() => setTab('preguntas')}>Preguntas y respuestas</button>
         <button type="button" aria-pressed={tab === 'resultados'} onClick={() => setTab('resultados')}>Resultados por alumno ({students.length})</button>
@@ -132,7 +136,10 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
             <tbody>{visibleStudents.map(student => <tr key={student.alumno_id}>
               <th scope="row"><strong>{student.nombre}</strong><small>{student.email}</small>{!student.inscrito && <small>Sin acceso actual a la materia</small>}</th>
               <td data-label="Última calificación">{student.intento ? <><strong>{student.intento.calificacion}/100</strong><small>Intento {student.historial.length + 1} · {formatDate(student.intento.fecha)}</small></> : '—'}</td>
-              <td data-label="Estado"><span className={student.permite_reintento ? styles.pending : styles.status}>{student.permite_reintento ? 'Nuevo intento habilitado' : student.intento ? 'Entregado' : 'Sin presentar'}</span></td>
+              <td data-label="Estado"><span className={student.permite_reintento || !student.disponible ? styles.pending : styles.status}>{student.intento && !student.permite_reintento ? 'Entregado' : !student.disponible ? 'Bloqueado' : student.permite_reintento ? 'Nuevo intento habilitado' : 'Disponible'}</span>
+                {(!student.intento || student.permite_reintento) && !student.disponible && <small>{student.motivo_bloqueo}</small>}
+                {student.permite_reintento && !student.disponible && <small>Nuevo intento autorizado al cumplirse el requisito.</small>}
+              </td>
               <td><div className={styles.actions}>
                 {student.intento && <button type="button" className="btn btn-secondary" onClick={() => setReview({ studentId: student.alumno_id, attempt: student.historial.length })}>Ver respuestas e historial</button>}
                 {student.intento && student.inscrito && !student.permite_reintento && <button type="button" className="btn btn-primary" disabled={busyStudent !== null} onClick={() => void enableAttempt(student)}>{busyStudent === student.alumno_id ? 'Habilitando...' : 'Habilitar nuevo intento'}</button>}

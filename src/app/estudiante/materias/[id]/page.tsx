@@ -33,6 +33,8 @@ interface ExamItem {
   mi_calificacion: number | null;
   intento_fecha: string | null;
   permite_reintento: number;
+  disponible: boolean;
+  motivo_bloqueo: string | null;
 }
 
 interface CursoDetail {
@@ -195,6 +197,7 @@ export default function MateriaDetailPage({ params }: { params: Promise<{ id: st
                   <FileText size={16} color="#0073A5" />
                   <div style={{ flex: 1 }}>
                     <div style={styles.rowTitle}>{ex.titulo}</div>
+                    {!done && !ex.disponible && <div style={styles.rowDesc}>{ex.motivo_bloqueo}</div>}
                     {ex.mi_calificacion != null && (
                       <div style={styles.rowDesc}>{ex.permite_reintento ? 'Calificación anterior' : 'Calificación'}: {ex.mi_calificacion}%</div>
                     )}
@@ -202,7 +205,7 @@ export default function MateriaDetailPage({ params }: { params: Promise<{ id: st
                   {done ? (
                     <CheckCircle size={18} color="#10B981" />
                   ) : (
-                    <span style={styles.badgePending}>{ex.permite_reintento ? 'Nuevo intento habilitado' : 'Pendiente'}</span>
+                    <span style={styles.badgePending}>{!ex.disponible ? 'Bloqueado' : ex.permite_reintento ? 'Nuevo intento habilitado' : 'Disponible'}</span>
                   )}
                 </div>
               );

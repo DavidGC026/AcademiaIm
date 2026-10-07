@@ -160,7 +160,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [seccionesUploading, setSeccionesUploading] = useState(false);
   const [classLoading, setClassLoading] = useState(false);
   // Exámenes
-  const [exams, setExams] = useState<{ id: number; titulo: string; descripcion: string; limite_tiempo: number }[]>([]);
+  const [exams, setExams] = useState<{ id: number; titulo: string; descripcion: string; limite_tiempo: number; modo_liberacion: string; clase_requisito_titulo: string | null }[]>([]);
   const [examLoading, setExamLoading] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importLoading, setImportLoading] = useState(false);
@@ -623,11 +623,12 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       });
 
       if (res.ok) {
+        const data = await res.json();
         setNewExamTitle('');
         setNewExamDesc('');
         setNewExamTime(0);
         setQuestions([]);
-        router.replace(coursePath(basePath, selectedCourse.id, 'examenes'));
+        router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${data.examenId}`);
         fetchExams(selectedCourse.id);
       } else {
         alert('Error al crear examen.');
@@ -664,7 +665,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
         setNewExamDesc('');
         setNewExamTime(0);
         setImportFile(null);
-        router.replace(coursePath(basePath, selectedCourse.id, 'examenes'));
+        router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${data.examenId}`);
         fetchExams(selectedCourse.id);
       } else {
         alert(data.error || 'Error al importar examen.');
@@ -1403,7 +1404,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                   <div className="teacher-section-heading">
                     <div>
                       <h3 style={styles.cardTitle}>Exámenes de la materia</h3>
-                      <p style={styles.cardSubtitle}>Crea evaluaciones de opción múltiple con autocalificación o súbelas en Excel</p>
+                      <p style={styles.cardSubtitle}>Crea o importa un examen y configura cuándo habilitarlo. Los nuevos exámenes quedan bloqueados hasta que elijas su disponibilidad.</p>
                     </div>
                     {!showExamBuilder && !showExcelImporter && (
                       <div className="teacher-inline-actions">
@@ -1431,6 +1432,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                               </span>
                             </div>
                             <p style={styles.classDescText}>{ex.descripcion}</p>
+                            <p style={styles.classDescText}>{ex.modo_liberacion === 'tarea_entregada' ? `Se habilita al entregar la tarea de: ${ex.clase_requisito_titulo || 'tarea por configurar'}` : ex.modo_liberacion === 'bloqueado' ? 'Bloqueado: pendiente de habilitar por el maestro' : 'Habilitado para los alumnos'}</p>
                             <Link href={`/${isAdmin ? 'admin' : 'maestro'}/examenes/${ex.id}`} className="btn btn-secondary" style={{ alignSelf: 'flex-start', marginTop: '12px' }}>
                               Ver examen y resultados
                             </Link>
@@ -1519,7 +1521,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
                       <div style={{ display: 'flex', gap: '12px' }}>
                         <button type="submit" className="btn btn-primary" style={{ flex: 1, backgroundColor: '#10B981', borderColor: '#10B981' }} disabled={importLoading || !importFile}>
-                          {importLoading ? 'Importando preguntas...' : 'Importar y Publicar Examen'}
+                          {importLoading ? 'Importando preguntas...' : 'Importar examen'}
                         </button>
                         <button 
                           type="button" 
@@ -1631,7 +1633,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
                       <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
                         <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={examLoading}>
-                          {examLoading ? 'Guardando Examen...' : 'Guardar y Publicar Examen'}
+                          {examLoading ? 'Guardando examen...' : 'Guardar examen'}
                         </button>
                         <button type="button" onClick={() => { if (confirmLeave()) router.push(coursePath(basePath, selectedCourse.id, 'examenes')); }} className="btn btn-secondary" style={{ flex: 1 }}>
                           Cancelar

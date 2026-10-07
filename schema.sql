@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS examenes (
     titulo VARCHAR(255) NOT NULL,
     descripcion TEXT,
     limite_tiempo INT DEFAULT 0,
+    modo_liberacion VARCHAR(32) NOT NULL DEFAULT 'abierto',
+    clase_requisito_id INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (curso_id) REFERENCES cursos(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

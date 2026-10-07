@@ -50,6 +50,9 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [correctAnswers, setCorrectAnswers] = useState<Record<number, number>>({});
   const [hasSavedAnswers, setHasSavedAnswers] = useState(true);
   const [retryEnabled, setRetryEnabled] = useState(false);
+  const [available, setAvailable] = useState(false);
+  const [lockedReason, setLockedReason] = useState('');
+  const [requiredClassId, setRequiredClassId] = useState<number | null>(null);
   const sendingRef = useRef(false);
   const [reload, setReload] = useState(0);
   
@@ -60,12 +63,16 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   useEffect(() => {
     const controller = new AbortController();
     async function load() {
+      setLoading(true);
       try {
         const res = await fetch(`/api/examenes/${examId}`, { signal: controller.signal });
         if (res.ok) {
           const data = await res.json();
           setExam(data.exam);
           setQuestions(data.preguntas);
+          setAvailable(Boolean(data.disponible));
+          setLockedReason(data.motivo_bloqueo || 'El examen todavía no está habilitado.');
+          setRequiredClassId(data.exam.clase_requisito_id);
           const completed = data.mi_intento && !data.mi_intento.permite_reintento;
           setSubmitted(Boolean(completed));
           setRetryEnabled(Boolean(data.mi_intento?.permite_reintento));
@@ -73,7 +80,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           setAnswers(completed ? data.mi_intento.respuestas || {} : {});
           setHasSavedAnswers(!completed || data.mi_intento.respuestas !== null);
           setCorrectAnswers(data.respuestasCorrectas || {});
-          setTimeLeft(data.exam.limite_tiempo * 60);
+          setTimeLeft(data.disponible ? data.exam.limite_tiempo * 60 : 0);
         } else {
           setExam(null);
         }
@@ -91,7 +98,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   }, [examId, reload]);
 
   const handleSelectOption = (questionId: number, optionId: number) => {
-    if (submitted) return;
+    if (submitted || !available) return;
     setAnswers({
       ...answers,
       [questionId]: optionId
@@ -99,7 +106,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   const submitExam = async (finalAnswers: Record<number, number>) => {
-    if (sendingRef.current || submitted) return;
+    if (sendingRef.current || submitted || !available) return;
     sendingRef.current = true;
     setSubmitting(true);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -121,7 +128,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       } else {
         const data = await res.json();
         alert(data.error || 'Error al calificar el examen');
-        if (res.status === 409) setReload(value => value + 1);
+        if (res.status === 409 || res.status === 403) setReload(value => value + 1);
       }
     } catch (error) {
       console.error('Error al enviar el examen:', error);
@@ -151,7 +158,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   });
 
   useEffect(() => {
-    if (timeLeft > 0 && !submitted && !submitting) {
+    if (timeLeft > 0 && !submitted && !submitting && available && !loading) {
       timerRef.current = setInterval(() => {
         if (timeLeft <= 1) {
           clearInterval(timerRef.current!);
@@ -165,7 +172,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [timeLeft, submitted, submitting]);
+  }, [timeLeft, submitted, submitting, available, loading]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -189,6 +196,21 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         </div>
       </div>
     );
+  }
+
+  if (!available && !submitted) {
+    return <div style={styles.container}>
+      <Link href={`/estudiante/materias/${exam.curso_id}`} style={styles.backLink}><ArrowLeft size={16} /> Volver a la materia</Link>
+      <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
+        <h1 style={styles.title}>{exam.titulo}</h1>
+        <h2 style={{ fontSize: '18px', margin: '16px 0' }}>Examen pendiente de habilitar</h2>
+        <p style={{ marginBottom: '20px' }}>{lockedReason}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '12px' }}>
+          {requiredClassId && <Link className="btn btn-primary" href={`/estudiante/clases/${requiredClassId}`}>Ir a la tarea final</Link>}
+          <button type="button" className="btn btn-secondary" onClick={() => setReload(value => value + 1)}>Actualizar disponibilidad</button>
+        </div>
+      </div>
+    </div>;
   }
 
   return (

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
-import { ensureExamAttemptSchema } from '@/lib/examSchema';
+import { getCourseExams } from '@/lib/examAvailability';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
 
 export async function GET(request: Request) {
@@ -51,23 +51,14 @@ export async function GET(request: Request) {
       videos: typeof cls.videos === 'string' ? JSON.parse(cls.videos) : cls.videos || [],
     }));
 
-    await ensureExamAttemptSchema();
-    const [examenes] = (await pool.execute(
-      `SELECT e.*, i.calificacion as mi_calificacion, i.finalizado_at as intento_fecha,
-              COALESCE(i.permite_reintento, 0) AS permite_reintento
-       FROM examenes e
-       LEFT JOIN intentos_examenes i ON e.id = i.examen_id AND i.usuario_id = ?
-       WHERE e.curso_id = ?
-       ORDER BY e.created_at ASC`,
-      [session.userId, cursoIdNum]
-    )) as any[];
+    const examenes = await getCourseExams(cursoIdNum, session.userId);
 
     let pendientes = 0;
     for (const cls of classes) {
       if (cls.requiere_tarea === 1 && !cls.entrega_id) pendientes++;
     }
     for (const ex of examenes) {
-      if (ex.permite_reintento || (!ex.intento_fecha && ex.mi_calificacion == null)) pendientes++;
+      if (ex.disponible && (ex.permite_reintento || (!ex.intento_fecha && ex.mi_calificacion == null))) pendientes++;
     }
 
     const totalItems = classes.length + examenes.length;

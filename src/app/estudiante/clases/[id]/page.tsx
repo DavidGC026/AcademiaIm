@@ -55,6 +55,10 @@ interface SiblingClass {
 interface CursoExam {
   id: number;
   titulo: string;
+  disponible: boolean;
+  motivo_bloqueo: string | null;
+  mi_calificacion: number | null;
+  permite_reintento: number;
 }
 
 interface Submission {
@@ -255,7 +259,10 @@ export default function ClassPlayerPage({ params }: { params: Promise<{ id: stri
                   </h4>
                   {cursoExams.map((ex) => (
                     <Link key={ex.id} href={`/estudiante/examenes/${ex.id}`} style={styles.examLink}>
-                      <FileText size={14} /> {ex.titulo}
+                      <FileText size={14} style={{ flexShrink: 0 }} />
+                      <span>{ex.titulo}
+                        {!ex.disponible && (ex.mi_calificacion == null || ex.permite_reintento) && <small style={{ display: 'block', color: '#526477', marginTop: '4px' }}>{ex.motivo_bloqueo}</small>}
+                      </span>
                     </Link>
                   ))}
                 </>

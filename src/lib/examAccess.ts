@@ -2,6 +2,7 @@ import pool from './db';
 import type { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import type { JWTPayload } from './auth';
 import type { ExamDetails, ExamOption, ExamQuestion } from './examTypes';
+import { ensureExamReleaseSchema } from './examSchema';
 
 export interface ExamRow extends ExamDetails, RowDataPacket {
   creado_por_id: number;
@@ -9,9 +10,13 @@ export interface ExamRow extends ExamDetails, RowDataPacket {
 }
 
 export async function getExam(id: number) {
+  await ensureExamReleaseSchema();
   const [rows] = await pool.execute<ExamRow[]>(
-    `SELECT e.*, c.nombre AS curso_nombre, c.creado_por_id, c.estado AS curso_estado
-     FROM examenes e JOIN cursos c ON c.id = e.curso_id WHERE e.id = ?`, [id]
+    `SELECT e.*, c.nombre AS curso_nombre, c.creado_por_id, c.estado AS curso_estado,
+            requisito.titulo AS clase_requisito_titulo
+     FROM examenes e JOIN cursos c ON c.id = e.curso_id
+     LEFT JOIN clases requisito ON requisito.id = e.clase_requisito_id AND requisito.curso_id = e.curso_id AND requisito.requiere_tarea = 1
+     WHERE e.id = ?`, [id]
   );
   return rows[0] ?? null;
 }

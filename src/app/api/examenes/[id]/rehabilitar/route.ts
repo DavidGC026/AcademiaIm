@@ -6,6 +6,7 @@ import { canManageExam, getExam } from '@/lib/examAccess';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
 import { ensureExamAttemptSchema } from '@/lib/examSchema';
 import { readExamJson } from '@/lib/examGrading';
+import { getExamAvailability } from '@/lib/examAvailability';
 import type { ExamAttemptSnapshot } from '@/lib/examTypes';
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -43,7 +44,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     await connection.execute('UPDATE intentos_examenes SET permite_reintento = 1, finalizado_at = finalizado_at WHERE id = ?', [attempt.id]);
     await connection.commit();
     transactionStarted = false;
-    return NextResponse.json({ success: true, message: 'Nuevo intento habilitado. La calificación anterior se conservará en el historial.' });
+    return NextResponse.json({ success: true, ...await getExamAvailability(exam, alumno_id), message: 'Nuevo intento autorizado. La calificación anterior se conservará en el historial.' });
   } catch (error) {
     if (connection && transactionStarted) await connection.rollback();
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Solicitud inválida' }, { status: 400 });

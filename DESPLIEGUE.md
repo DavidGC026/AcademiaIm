@@ -92,8 +92,9 @@ El procedimiento realiza estos pasos:
    `mariadb-dump --single-transaction`, con rutinas, eventos y disparadores. Guarda
    también la definición de este proceso PM2 en `pm2-app.json`.
 6. Después del respaldo, agrega de forma idempotente las columnas de reintentos,
-   respuestas e historial mediante `scripts/migrate-exam-attempts.ts`. Conserva
-   las calificaciones y fechas existentes; no elimina filas ni crea exámenes.
+   respuestas, historial y liberación mediante `scripts/migrate-exam-attempts.ts`.
+   Conserva las calificaciones, fechas y disponibilidad de exámenes existentes;
+   no elimina filas ni crea exámenes.
 7. Conserva los assets estáticos del build anterior para las pestañas que sigan
    abiertas. Detiene únicamente `academia-lms`, sincroniza el código compilado y
    recrea su entrada PM2 con `ecosystem.config.cjs`. Hay una breve interrupción en
@@ -163,6 +164,15 @@ maestro lo solicite; las pruebas completas de reintentos usan una base aislada.
 La última nota sigue vigente hasta la nueva entrega, y la anterior pasa al historial.
 Los intentos de versiones anteriores conservan su nota aunque no tengan respuestas
 guardadas.
+
+En ese mismo panel, «Habilitar examen» permite abrirlo manualmente al terminar la
+clase o seleccionar «Al entregar la tarea final» y elegir una clase con tarea de
+la misma materia. La entrega habilita el examen solo a ese alumno, sin esperar
+calificación. Los exámenes nuevos, creados o importados, comienzan bloqueados y
+abren este panel para configurar su disponibilidad; los anteriores conservan su
+acceso. Los intentos adicionales también respetan esta condición. Si la tarea
+requerida se elimina o deja de requerir entrega, el examen permanece bloqueado
+hasta que el maestro corrija su configuración.
 
 Los exámenes con respuestas de referencia se guardan en
 `docs/referencias/examenes/`; no deben volver a colocarse en `public`.

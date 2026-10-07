@@ -3,6 +3,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { ExamImportError, parseExamWorkbook } from '@/lib/examImport';
+import { ensureExamReleaseSchema } from '@/lib/examSchema';
 
 export async function POST(request: Request) {
   let connection: PoolConnection | undefined;
@@ -31,8 +32,7 @@ export async function POST(request: Request) {
     }
 
     const preguntas = parseExamWorkbook(new Uint8Array(await file.arrayBuffer()));
-    connection = await pool.getConnection();
-    const [cursos] = await connection.execute<RowDataPacket[]>(
+    const [cursos] = await pool.execute<RowDataPacket[]>(
       session.roleName === 'administrador' ? 'SELECT id FROM cursos WHERE id = ?' : 'SELECT id FROM cursos WHERE id = ? AND creado_por_id = ?',
       session.roleName === 'administrador' ? [cursoId] : [cursoId, session.userId]
     );
@@ -40,10 +40,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Materia no encontrada o sin permiso para importar exámenes.' }, { status: 404 });
     }
 
+    await ensureExamReleaseSchema();
+    connection = await pool.getConnection();
     await connection.beginTransaction();
     transactionStarted = true;
     const [examResult] = await connection.execute<ResultSetHeader>(
-      'INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo) VALUES (?, ?, ?, ?)',
+      "INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, modo_liberacion) VALUES (?, ?, ?, ?, 'bloqueado')",
       [cursoId, titulo, descripcion, limiteTiempo]
     );
     const examenId = examResult.insertId;
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
       success: true,
       examenId,
       totalPreguntas: preguntas.length,
-      message: `Examen importado correctamente con ${preguntas.length} preguntas.`,
+      message: `Examen importado con ${preguntas.length} preguntas. Configura cuándo habilitarlo para los alumnos.`,
     });
   } catch (error: unknown) {
     if (connection && transactionStarted) await connection.rollback();

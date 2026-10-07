@@ -1,6 +1,7 @@
 /** Requiere una app local con la misma base *_qa y JWT_SECRET; nunca usar producción. */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import mysql, { type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
@@ -9,7 +10,7 @@ import type { ExamQuestion, ExamStudentResult } from '../src/lib/examTypes';
 
 const base = process.env.EXAM_QA_URL;
 
-test('examen: permisos, revisión, reintento individual, historial y entregas concurrentes', { skip: !base }, async () => {
+test('examen: liberación manual, tarea final, permisos, historial y entregas concurrentes', { skip: !base }, async () => {
   const url = new URL(base!);
   assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname) && url.port && url.port !== '3005', 'Solo se permite una app local de pruebas.');
   assert.ok(process.env.DB_NAME?.endsWith('_qa') && process.env.JWT_SECRET, 'Se requiere una base *_qa y JWT_SECRET de pruebas.');
@@ -18,10 +19,12 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
   const suffix = randomUUID();
   const users: number[] = [];
   let courseId = 0;
+  let otherCourseId = 0;
+  const uploadedFiles: string[] = [];
   let groupId = 0;
   const cookie = (id: number, roleName: string) => `auth_token=${jwt.sign({ userId: id, roleName }, process.env.JWT_SECRET!, { expiresIn: '10m' })}`;
-  async function api(path: string, auth: string | null, body?: unknown) {
-    const response = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...(auth ? { Cookie: auth } : {}), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  async function api(path: string, auth: string | null, body?: unknown, method = body === undefined ? 'GET' : 'POST') {
+    const response = await fetch(base + path, { method, headers: { ...(auth ? { Cookie: auth } : {}), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, data: await response.json() };
   }
   try {
@@ -32,6 +35,14 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
     const [adminId, teacherId, otherId, studentId, cohortId, outsiderId] = users;
     const [course] = await db.execute<ResultSetHeader>('INSERT INTO cursos (nombre,creado_por_id,estado) VALUES (?, ?, ?)', [`QA ${suffix}`, teacherId, 'aprobado']);
     courseId = course.insertId;
+    const [otherCourse] = await db.execute<ResultSetHeader>('INSERT INTO cursos (nombre,creado_por_id,estado) VALUES (?, ?, ?)', [`Otra materia QA ${suffix}`, otherId, 'aprobado']);
+    otherCourseId = otherCourse.insertId;
+    const classIds: number[] = [];
+    for (const [course, requiresTask] of [[courseId, 1], [courseId, 1], [courseId, 0], [otherCourseId, 1]]) {
+      const [result] = await db.execute<ResultSetHeader>('INSERT INTO clases (curso_id,titulo,requiere_tarea) VALUES (?, ?, ?)', [course, `Tarea QA ${classIds.length}`, requiresTask]);
+      classIds.push(result.insertId);
+    }
+    const [finalTaskId, otherTaskId, noTaskId, foreignTaskId] = classIds;
     await db.execute('INSERT INTO curso_estudiantes (curso_id,estudiante_id) VALUES (?, ?)', [courseId, studentId]);
     const [group] = await db.execute<ResultSetHeader>('INSERT INTO grupos_cohortes (nombre,codigo,creador_id) VALUES (?, ?, ?)', [`QA ${suffix}`, suffix, teacherId]);
     groupId = group.insertId;
@@ -59,6 +70,63 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
     assert.equal(questions.length, 10);
     const correct = Object.fromEntries(questions.map(q => [q.id, q.opciones.find(o => o.es_correcta === 1)!.id]));
     const wrong = Object.fromEntries(questions.map(q => [q.id, q.opciones.find(o => o.es_correcta === 0)!.id]));
+    const setRelease = (body: unknown, auth = teacher) => api(path + '/liberacion', auth, body, 'PUT');
+    const closed = { modo_liberacion: 'bloqueado' };
+    const open = { modo_liberacion: 'abierto' };
+    const finalTask = { modo_liberacion: 'tarea_entregada', clase_requisito_id: finalTaskId };
+    assert.equal(detail.exam.modo_liberacion, 'bloqueado', 'Los importados comienzan cerrados.');
+    const locked = (await api(path, student)).data;
+    assert.equal(locked.disponible, false);
+    assert.deepEqual(locked.preguntas, []);
+    assert.deepEqual(locked.respuestasCorrectas, {});
+    assert.equal((await api(path, student, { respuestas: correct })).status, 403);
+    assert.equal((await api(`/api/examenes?curso_id=${courseId}`, other)).status, 403);
+    assert.equal((await api(`/api/examenes?curso_id=${courseId}`, cookie(outsiderId, 'estudiante'))).status, 403);
+    assert.equal((await setRelease(open, student)).status, 401);
+    assert.equal((await setRelease(open, other)).status, 403);
+    for (const body of [{ modo_liberacion: 'otro' }, { modo_liberacion: ['abierto'] }, { ...finalTask, clase_requisito_id: null }, { ...finalTask, clase_requisito_id: noTaskId }, { ...finalTask, clase_requisito_id: foreignTaskId }]) {
+      assert.equal((await setRelease(body)).status, 400);
+    }
+    assert.equal((await setRelease(open, admin)).status, 200);
+    assert.equal((await api(path, cohort)).data.disponible, true);
+    assert.equal((await setRelease(finalTask)).status, 200);
+    const courseLocked = (await api(`/api/estudiante/clases?curso_id=${courseId}`, student)).data;
+    assert.equal(courseLocked.exams[0].disponible, false);
+    assert.equal(courseLocked.pendientes, 2, 'Solo las tareas pendientes; el examen aún no está disponible.');
+    async function uploadTask(id: number) {
+      const form = new FormData();
+      form.set('claseId', String(id));
+      form.set('file', new Blob(['Entrega de prueba']), 'qa-tarea.txt');
+      const response = await fetch(base + '/api/tareas/entregar', { method: 'POST', headers: { Cookie: student }, body: form });
+      const data = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(data));
+      assert.match(data.archivo_url, /^\/uploads\/\d+-\d+-\d+\.txt$/);
+      uploadedFiles.push(join(process.cwd(), 'public', data.archivo_url));
+    }
+    await uploadTask(otherTaskId);
+    assert.equal((await api(path, student)).data.disponible, false, 'Una tarea distinta no habilita el examen.');
+    await uploadTask(finalTaskId);
+    assert.equal((await api(path, student)).data.disponible, true);
+    assert.equal((await api(path, cohort)).data.disponible, false, 'La entrega de otro alumno no da acceso.');
+    assert.equal((await api(path, cohort, { respuestas: correct })).status, 403);
+    assert.equal((await api(`/api/examenes?curso_id=${courseId}`, student)).data.exams[0].disponible, true);
+    assert.equal((await api(`/api/estudiante/clases?curso_id=${courseId}`, cohort)).data.exams[0].disponible, false);
+    const releaseRoster = (await api(path + '/resultados', teacher)).data.alumnos;
+    assert.equal(releaseRoster.find((row: ExamStudentResult) => row.alumno_id === studentId).disponible, true);
+    assert.equal(releaseRoster.find((row: ExamStudentResult) => row.alumno_id === cohortId).disponible, false);
+    await db.execute('UPDATE clases SET requiere_tarea = 0 WHERE id = ?', [finalTaskId]);
+    assert.equal((await api(path, student)).data.disponible, false, 'La tarea desactivada falla cerrada.');
+    await db.execute('UPDATE clases SET requiere_tarea = 1 WHERE id = ?', [finalTaskId]);
+    // La habilitación manual sigue disponible después de usar una condición automática.
+    assert.equal((await setRelease(closed)).status, 200);
+    assert.equal((await api(path, student, { respuestas: correct })).status, 403, 'Una pestaña abierta no puede saltarse el bloqueo.');
+    assert.equal((await setRelease(open)).status, 200);
+    const createBody = { curso_id: courseId, titulo: 'Examen manual QA', preguntas: [{ pregunta: 'Prueba', opciones: [{ texto: 'Sí', es_correcta: true }, { texto: 'No', es_correcta: false }] }] };
+    assert.equal((await api('/api/examenes', other, createBody)).status, 403);
+    const created = await api('/api/examenes', teacher, createBody);
+    assert.equal(created.status, 200);
+    assert.equal((await api(`/api/examenes/${created.data.examenId}`, student)).data.disponible, false, 'Los creados manualmente también comienzan cerrados.');
+    await db.execute('DELETE FROM examenes WHERE id = ?', [created.data.examenId]);
     const roster = (await api(path + '/resultados', teacher)).data.alumnos as ExamStudentResult[];
     assert.deepEqual(roster.map(row => row.alumno_id).sort((a,b) => a-b), [studentId, cohortId].sort((a,b) => a-b));
     const before = (await api(path, student)).data;
@@ -78,7 +146,13 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
     assert.equal((await api(path + '/rehabilitar', teacher, { alumno_id: cohortId, numero_intento: 1 })).status, 409);
     await db.execute("UPDATE intentos_examenes SET finalizado_at = '2026-01-01 12:00:00' WHERE examen_id = ? AND usuario_id = ?", [examenId, studentId]);
     const oldDate = (await api(path, student)).data.mi_intento.fecha;
+    assert.equal((await setRelease(closed)).status, 200);
+    assert.equal((await api(path, student)).data.mi_intento.calificacion, 100, 'Las notas entregadas siguen visibles al cerrar.');
+    assert.deepEqual((await api(path, student)).data.respuestasCorrectas, correct);
     assert.equal((await api(path + '/rehabilitar', teacher, reset)).status, 200);
+    assert.equal((await api(path, student, { respuestas: wrong })).status, 403, 'Un reintento también respeta la liberación.');
+    assert.deepEqual((await api(path, student)).data.preguntas, []);
+    assert.equal((await setRelease(open)).status, 200);
     assert.equal((await api(path + '/rehabilitar', teacher, reset)).status, 200);
     const reopened = (await api(path, student)).data;
     assert.equal(reopened.mi_intento.permite_reintento, true);
@@ -89,7 +163,7 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
     const courseList = (await api(`/api/estudiante/clases?curso_id=${courseId}`, student)).data;
     assert.equal(courseList.exams[0].permite_reintento, 1);
     assert.equal(courseList.pendientes, 1);
-    assert.equal(courseList.progreso.done, 0);
+    assert.equal(courseList.progreso.done, 3);
     assert.equal((await api(path, student, { respuestas: { 999999: 1 } })).status, 400);
     assert.equal((await api(path, student)).data.mi_intento.permite_reintento, true);
     const second = await Promise.all([api(path, student, { respuestas: wrong }), api(path, student, { respuestas: wrong })]);
@@ -117,10 +191,15 @@ test('examen: permisos, revisión, reintento individual, historial y entregas co
     assert.equal(legacy.historial[0].respuestas, null);
     const [count] = await db.query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM intentos_examenes WHERE examen_id = ?', [examenId]);
     assert.equal(count[0].n, 2);
+    assert.equal((await setRelease(finalTask)).status, 200);
+    await db.execute('DELETE FROM clases WHERE id = ?', [finalTaskId]);
+    assert.equal((await api(path, student)).data.disponible, false, 'Eliminar la tarea no libera el examen.');
   } finally {
     if (courseId) await db.execute('DELETE FROM cursos WHERE id = ?', [courseId]);
+    if (otherCourseId) await db.execute('DELETE FROM cursos WHERE id = ?', [otherCourseId]);
     if (groupId) await db.execute('DELETE FROM grupos_cohortes WHERE id = ?', [groupId]);
     for (const userId of users) await db.execute('DELETE FROM usuarios WHERE id = ?', [userId]);
     await db.end();
+    for (const file of uploadedFiles) unlinkSync(file);
   }
 });

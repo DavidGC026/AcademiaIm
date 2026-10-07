@@ -4,9 +4,10 @@ import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
 import { canManageExam, getExam, getExamQuestions } from '@/lib/examAccess';
+import { getExamAvailability } from '@/lib/examAvailability';
 import { ensureExamAttemptSchema } from '@/lib/examSchema';
 import { attemptSnapshot, ExamValidationError, gradeExam, readExamJson } from '@/lib/examGrading';
-import type { ExamAttemptSnapshot } from '@/lib/examTypes';
+import type { ExamAttemptSnapshot, ExamReleaseConfig } from '@/lib/examTypes';
 
 type AttemptRow = RowDataPacket & {
   id: number;
@@ -32,8 +33,13 @@ export async function GET(_request: Request, { params }: Context) {
       return NextResponse.json({ error: 'No tienes acceso a este examen' }, { status: 403 });
     }
     await ensureExamAttemptSchema();
-    const questions = await getExamQuestions(examenId);
-    if (!isStudent) return NextResponse.json({ exam, preguntas: questions });
+    if (!isStudent) {
+      const [questions, [classes]] = await Promise.all([
+        getExamQuestions(examenId),
+        pool.execute<RowDataPacket[]>('SELECT id, titulo FROM clases WHERE curso_id = ? AND requiere_tarea = 1 ORDER BY orden, id', [exam.curso_id]),
+      ]);
+      return NextResponse.json({ exam, preguntas: questions, clases_con_tarea: classes });
+    }
 
     const [attempts] = await pool.execute<AttemptRow[]>(
       'SELECT * FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ?', [examenId, session.userId]
@@ -41,8 +47,11 @@ export async function GET(_request: Request, { params }: Context) {
     const attempt = attempts[0];
     const completed = attempt?.calificacion != null && !attempt.permite_reintento;
     const snapshot = attempt ? attemptSnapshot(attempt) : null;
+    const availability = await getExamAvailability(exam, session.userId);
+    const questions = availability.disponible || completed ? await getExamQuestions(examenId) : [];
     return NextResponse.json({
       exam,
+      ...availability,
       preguntas: questions.map(question => ({
         ...question,
         opciones: question.opciones.map(option => ({ id: option.id, pregunta_id: option.pregunta_id, texto: option.texto })),
@@ -83,6 +92,21 @@ export async function POST(request: Request, { params }: Context) {
       await connection.rollback();
       transactionStarted = false;
       return NextResponse.json({ error: 'Ya entregaste este examen. Tu maestro debe habilitar un nuevo intento.' }, { status: 409 });
+    }
+    // Compartir el bloqueo permite entregas simultáneas y ordena los cambios del maestro.
+    const [releaseRows] = await connection.execute<(RowDataPacket & ExamReleaseConfig)[]>(
+      'SELECT modo_liberacion, clase_requisito_id FROM examenes WHERE id = ? LOCK IN SHARE MODE', [examenId],
+    );
+    if (!releaseRows.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return NextResponse.json({ error: 'Examen no encontrado' }, { status: 404 });
+    }
+    const availability = await getExamAvailability({ ...releaseRows[0], curso_id: exam.curso_id }, session.userId, connection);
+    if (!availability.disponible) {
+      await connection.rollback();
+      transactionStarted = false;
+      return NextResponse.json({ error: availability.motivo_bloqueo }, { status: 403 });
     }
     const graded = gradeExam(await getExamQuestions(examenId, connection), respuestas);
     const history = readExamJson<ExamAttemptSnapshot[]>(previous?.historial, []);

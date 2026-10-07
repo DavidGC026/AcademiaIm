@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { getSession } from '@/lib/auth';
-import { ensureExamAttemptSchema } from '@/lib/examSchema';
+import { ensureExamReleaseSchema } from '@/lib/examSchema';
+import { getCourseExams } from '@/lib/examAvailability';
+import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
 
 export async function GET(request: Request) {
   try {
@@ -17,18 +20,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Falta curso_id' }, { status: 400 });
     }
 
-    await ensureExamAttemptSchema();
-    const [rows] = await pool.execute(
-      `SELECT e.*, i.calificacion as mi_calificacion, i.finalizado_at as intento_fecha,
-              COALESCE(i.permite_reintento, 0) AS permite_reintento
-       FROM examenes e
-       LEFT JOIN intentos_examenes i ON e.id = i.examen_id AND i.usuario_id = ?
-       WHERE e.curso_id = ?
-       ORDER BY e.created_at ASC`,
-      [session.userId, cursoId]
+    const courseId = Number(cursoId);
+    if (!Number.isSafeInteger(courseId) || courseId < 1) return NextResponse.json({ error: 'Materia inválida' }, { status: 400 });
+    const [courses] = await pool.execute<RowDataPacket[]>('SELECT creado_por_id FROM cursos WHERE id = ?', [courseId]);
+    const allowed = courses[0] && (session.roleName === 'administrador' ||
+      (session.roleName === 'maestro' && courses[0].creado_por_id === session.userId) ||
+      (session.roleName === 'estudiante' && await estudiantePuedeAccederCurso(session.userId, courseId))
     );
-
-    return NextResponse.json({ exams: rows });
+    if (!allowed) return NextResponse.json({ error: 'No tienes acceso a esta materia' }, { status: 403 });
+    return NextResponse.json({ exams: await getCourseExams(courseId, session.userId) });
   } catch (error: unknown) {
     console.error('Error al obtener exámenes:', error);
     return NextResponse.json({ error: 'Error del servidor' }, { status: 500 });
@@ -36,7 +36,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const connection = await pool.getConnection();
+  let connection: PoolConnection | undefined;
+  let transactionStarted = false;
   try {
     const session = await getSession();
     if (!session || (session.roleName !== 'maestro' && session.roleName !== 'administrador')) {
@@ -49,10 +50,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
     }
 
+    const [courses] = await pool.execute<RowDataPacket[]>(
+      'SELECT creado_por_id FROM cursos WHERE id = ?', [curso_id],
+    );
+    if (!courses[0] || (session.roleName !== 'administrador' && courses[0].creado_por_id !== session.userId)) {
+      return NextResponse.json({ error: 'No tienes permiso para crear exámenes en esta materia' }, { status: 403 });
+    }
+    await ensureExamReleaseSchema();
+
+    connection = await pool.getConnection();
     await connection.beginTransaction();
+    transactionStarted = true;
 
     const [examResult] = await connection.execute(
-      `INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, modo_liberacion) VALUES (?, ?, ?, ?, 'bloqueado')`,
       [curso_id, titulo, descripcion || '', limite_tiempo || 0]
     ) as any[];
 
@@ -77,14 +88,15 @@ export async function POST(request: Request) {
     }
 
     await connection.commit();
+    transactionStarted = false;
 
     return NextResponse.json({ success: true, examenId });
   } catch (error: unknown) {
-    await connection.rollback();
+    if (connection && transactionStarted) await connection.rollback();
     console.error('Error al crear examen:', error);
     return NextResponse.json({ error: 'Error del servidor al crear examen' }, { status: 500 });
   } finally {
-    connection.release();
+    connection?.release();
   }
 }
 export const runtime = 'nodejs';
