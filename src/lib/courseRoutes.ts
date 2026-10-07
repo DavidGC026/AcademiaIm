@@ -6,10 +6,11 @@ export interface CourseRoute {
   section: CourseSection;
   editor: 'class' | 'exam' | 'import' | null;
   classId: number | null;
+  examId: number | null;
 }
 
 export function parseCourseRoute(segments: string[]): CourseRoute {
-  const route: CourseRoute = { kind: 'invalid', courseId: null, section: 'clases', editor: null, classId: null };
+  const route: CourseRoute = { kind: 'invalid', courseId: null, section: 'clases', editor: null, classId: null, examId: null };
   if (!segments.length) return { ...route, kind: 'catalog' };
   if (segments.length === 1 && segments[0] === 'nueva') return { ...route, kind: 'new' };
   if (!/^[1-9]\d*$/.test(segments[0]) || !Number.isSafeInteger(Number(segments[0]))) return route;
@@ -20,6 +21,7 @@ export function parseCourseRoute(segments: string[]): CourseRoute {
   if (segments.length === 3 && section === 'clases' && action === 'nueva') return { ...course, editor: 'class' };
   if (segments.length === 4 && section === 'clases' && /^[1-9]\d*$/.test(action) && Number.isSafeInteger(Number(action)) && edit === 'editar') return { ...course, editor: 'class', classId: Number(action) };
   if (segments.length === 3 && section === 'examenes' && ['nuevo', 'importar'].includes(action)) return { ...course, editor: action === 'nuevo' ? 'exam' : 'import' };
+  if (segments.length === 4 && section === 'examenes' && /^[1-9]\d*$/.test(action) && Number.isSafeInteger(Number(action)) && edit === 'editar') return { ...course, editor: 'exam', examId: Number(action) };
   return route;
 }
 

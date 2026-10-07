@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
@@ -136,6 +136,120 @@ export async function POST(request: Request, { params }: Context) {
     return NextResponse.json({ error: 'Error al guardar el examen. Inténtalo de nuevo.' }, { status: 500 });
   } finally {
     connection?.release();
+  }
+}
+
+type QuestionInput = { id?: number; pregunta: string; tipo?: string; opciones: { id?: number; texto: string; es_correcta: boolean }[] };
+
+// Editar examen conservando los IDs de preguntas/opciones existentes,
+// porque los intentos guardados referencian esos IDs en sus respuestas.
+export async function PUT(request: Request, { params }: Context) {
+  let connection: PoolConnection | undefined;
+  let transactionStarted = false;
+  try {
+    const session = await getSession();
+    if (!session || (session.roleName !== 'maestro' && session.roleName !== 'administrador')) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+    const examenId = Number((await params).id);
+    if (!Number.isSafeInteger(examenId) || examenId < 1) return NextResponse.json({ error: 'Examen inválido' }, { status: 400 });
+    const exam = await getExam(examenId);
+    if (!exam) return NextResponse.json({ error: 'Examen no encontrado' }, { status: 404 });
+    if (!canManageExam(exam, session)) return NextResponse.json({ error: 'No tienes permiso para editar este examen' }, { status: 403 });
+
+    const { titulo, descripcion, limite_tiempo, preguntas } = await request.json() as { titulo?: string; descripcion?: string; limite_tiempo?: number; preguntas?: QuestionInput[] };
+    if (!titulo?.trim() || !Array.isArray(preguntas) || preguntas.length === 0) {
+      return NextResponse.json({ error: 'El examen necesita título y al menos una pregunta' }, { status: 400 });
+    }
+    for (const [index, q] of preguntas.entries()) {
+      if (!q.pregunta?.trim() || !Array.isArray(q.opciones) || q.opciones.length < 2 || q.opciones.some(o => !o.texto?.trim())) {
+        return NextResponse.json({ error: `La pregunta ${index + 1} necesita enunciado y al menos dos opciones con texto` }, { status: 400 });
+      }
+      if (q.opciones.filter(o => o.es_correcta).length !== 1) {
+        return NextResponse.json({ error: `La pregunta ${index + 1} debe tener exactamente una respuesta correcta` }, { status: 400 });
+      }
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    await connection.execute(
+      'UPDATE examenes SET titulo = ?, descripcion = ?, limite_tiempo = ? WHERE id = ?',
+      [titulo.trim(), descripcion || '', Number(limite_tiempo) || 0, examenId]
+    );
+
+    const existing = await getExamQuestions(examenId, connection);
+    const existingQuestionIds = new Set(existing.map(q => q.id));
+    const optionOwner = new Map(existing.flatMap(q => q.opciones.map(o => [o.id, q.id] as const)));
+    const keptQuestionIds: number[] = [];
+
+    for (const q of preguntas) {
+      let preguntaId: number;
+      if (q.id && existingQuestionIds.has(q.id)) {
+        preguntaId = q.id;
+        await connection.execute('UPDATE preguntas SET pregunta = ?, tipo = ? WHERE id = ?', [q.pregunta.trim(), q.tipo || 'opcion_multiple', preguntaId]);
+      } else {
+        const [result] = await connection.execute<ResultSetHeader>(
+          'INSERT INTO preguntas (examen_id, pregunta, tipo) VALUES (?, ?, ?)', [examenId, q.pregunta.trim(), q.tipo || 'opcion_multiple']
+        );
+        preguntaId = result.insertId;
+      }
+      keptQuestionIds.push(preguntaId);
+
+      const keptOptionIds: number[] = [];
+      for (const o of q.opciones) {
+        if (o.id && optionOwner.get(o.id) === preguntaId) {
+          await connection.execute('UPDATE opciones SET texto = ?, es_correcta = ? WHERE id = ?', [o.texto.trim(), o.es_correcta ? 1 : 0, o.id]);
+          keptOptionIds.push(o.id);
+        } else {
+          const [result] = await connection.execute<ResultSetHeader>(
+            'INSERT INTO opciones (pregunta_id, texto, es_correcta) VALUES (?, ?, ?)', [preguntaId, o.texto.trim(), o.es_correcta ? 1 : 0]
+          );
+          keptOptionIds.push(result.insertId);
+        }
+      }
+      await connection.execute(
+        `DELETE FROM opciones WHERE pregunta_id = ? AND id NOT IN (${keptOptionIds.map(() => '?').join(',')})`, [preguntaId, ...keptOptionIds]
+      );
+    }
+
+    // Las opciones de las preguntas eliminadas se borran en cascada
+    await connection.execute(
+      `DELETE FROM preguntas WHERE examen_id = ? AND id NOT IN (${keptQuestionIds.map(() => '?').join(',')})`, [examenId, ...keptQuestionIds]
+    );
+
+    await connection.commit();
+    transactionStarted = false;
+    return NextResponse.json({ success: true, examenId });
+  } catch (error) {
+    if (connection && transactionStarted) await connection.rollback();
+    if (error instanceof SyntaxError) return NextResponse.json({ error: 'Formato de examen inválido' }, { status: 400 });
+    console.error('Error al editar examen:', error);
+    return NextResponse.json({ error: 'Error al guardar los cambios del examen' }, { status: 500 });
+  } finally {
+    connection?.release();
+  }
+}
+
+// Eliminar examen (preguntas, opciones e intentos se eliminan en cascada)
+export async function DELETE(_request: Request, { params }: Context) {
+  try {
+    const session = await getSession();
+    if (!session || (session.roleName !== 'maestro' && session.roleName !== 'administrador')) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+    const examenId = Number((await params).id);
+    if (!Number.isSafeInteger(examenId) || examenId < 1) return NextResponse.json({ error: 'Examen inválido' }, { status: 400 });
+    const exam = await getExam(examenId);
+    if (!exam) return NextResponse.json({ error: 'Examen no encontrado' }, { status: 404 });
+    if (!canManageExam(exam, session)) return NextResponse.json({ error: 'No tienes permiso para eliminar este examen' }, { status: 403 });
+
+    await pool.execute('DELETE FROM examenes WHERE id = ?', [examenId]);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error al eliminar examen:', error);
+    return NextResponse.json({ error: 'Error al eliminar el examen' }, { status: 500 });
   }
 }
 

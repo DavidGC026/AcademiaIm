@@ -110,6 +110,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const showClassForm = route.editor === 'class';
   const editingClassId = route.classId;
   const showExamBuilder = route.editor === 'exam';
+  const editingExamId = route.examId;
   const showExcelImporter = route.editor === 'import';
   const editorInitialized = useRef<string | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -168,11 +169,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [newExamTitle, setNewExamTitle] = useState('');
   const [newExamDesc, setNewExamDesc] = useState('');
   const [newExamTime, setNewExamTime] = useState(0);
+  // Copia del examen cargado para detectar cambios sin guardar al editar
+  const [examSnapshot, setExamSnapshot] = useState('');
+  const [examFetching, setExamFetching] = useState(false);
   
   interface QuestionBuilder {
+    id?: number;
     pregunta: string;
     tipo: string;
-    opciones: { texto: string; es_correcta: boolean }[];
+    opciones: { id?: number; texto: string; es_correcta: boolean }[];
   }
   const [questions, setQuestions] = useState<QuestionBuilder[]>([]);
 
@@ -610,8 +615,8 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
     setExamLoading(true);
     try {
-      const res = await fetch('/api/examenes', {
-        method: 'POST',
+      const res = await fetch(editingExamId ? `/api/examenes/${editingExamId}` : '/api/examenes', {
+        method: editingExamId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           curso_id: selectedCourse.id,
@@ -628,16 +633,61 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
         setNewExamDesc('');
         setNewExamTime(0);
         setQuestions([]);
-        router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${data.examenId}`);
+        setExamSnapshot('');
+        router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${editingExamId ?? data.examenId}`);
         fetchExams(selectedCourse.id);
       } else {
-        alert('Error al crear examen.');
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || (editingExamId ? 'Error al guardar los cambios del examen.' : 'Error al crear examen.'));
       }
     } catch (err) {
       console.error(err);
       alert('Error de conexión.');
     } finally {
       setExamLoading(false);
+    }
+  };
+
+  const handleDeleteExam = async (examId: number, titulo: string) => {
+    if (!confirm(`¿Seguro que deseas eliminar el examen "${titulo}"?\n\nSe eliminarán sus preguntas y las calificaciones que ya obtuvieron los alumnos. Esta acción no se puede deshacer.`)) return;
+    try {
+      const res = await fetch(`/api/examenes/${examId}`, { method: 'DELETE' });
+      if (res.ok && selectedCourse) {
+        fetchExams(selectedCourse.id);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Error al eliminar el examen.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error de conexión');
+    }
+  };
+
+  const loadExamForEdit = async (examId: number, editorPath: string) => {
+    setExamFetching(true);
+    try {
+      const res = await fetch(`/api/examenes/${examId}`);
+      if (!res.ok) throw new Error('No se pudo cargar el examen.');
+      const data = await res.json();
+      if (editorInitialized.current !== editorPath) return;
+      const loaded: QuestionBuilder[] = (data.preguntas || []).map((p: { id: number; pregunta: string; tipo?: string; opciones: { id: number; texto: string; es_correcta: number | boolean }[] }) => ({
+        id: p.id,
+        pregunta: p.pregunta,
+        tipo: p.tipo || 'opcion_multiple',
+        opciones: p.opciones.map(o => ({ id: o.id, texto: o.texto, es_correcta: !!Number(o.es_correcta) })),
+      }));
+      setNewExamTitle(data.exam.titulo || '');
+      setNewExamDesc(data.exam.descripcion || '');
+      setNewExamTime(Number(data.exam.limite_tiempo) || 0);
+      setQuestions(loaded);
+      setExamSnapshot(JSON.stringify([data.exam.titulo || '', data.exam.descripcion || '', Number(data.exam.limite_tiempo) || 0, loaded]));
+    } catch (err) {
+      console.error(err);
+      alert('No se pudo cargar el examen para editarlo.');
+      if (selectedCourse) router.replace(coursePath(basePath, selectedCourse.id, 'examenes'));
+    } finally {
+      setExamFetching(false);
     }
   };
 
@@ -862,13 +912,14 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const hasGroupChanges = gruposCurso.some(grupo => (Number(grupo.asignado) === 1) !== selectedGrupoIds.includes(grupo.id));
   const hasUnsavedChanges = (showCourseForm && !!(newCourseName || newCourseDesc || newCourseImagen)) || (!!selectedCourse && (
     classFormDirty ||
-    ((showExamBuilder || showExcelImporter) && !!(newExamTitle || newExamDesc || importFile || questions.some(q => q.pregunta || q.opciones.some(o => o.texto)))) ||
+    (editingExamId ? !examFetching && !!examSnapshot && JSON.stringify([newExamTitle, newExamDesc, newExamTime, questions]) !== examSnapshot :
+      (showExamBuilder || showExcelImporter) && !!(newExamTitle || newExamDesc || importFile || questions.some(q => q.pregunta || q.opciones.some(o => o.texto)))) ||
     editCourseNombre !== selectedCourse.nombre ||
     editCourseDesc !== (selectedCourse.descripcion || '') ||
     editCourseImagen !== (selectedCourse.imagen || '') ||
     hasGroupChanges
   ));
-  const workspaceBusy = courseLoading || courseDetailsSaving || classLoading || examLoading || importLoading || gruposSaveLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading;
+  const workspaceBusy = courseLoading || courseDetailsSaving || classLoading || examLoading || examFetching || importLoading || gruposSaveLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading;
   const confirmLeave = () => !hasUnsavedChanges || confirm('Tienes cambios sin guardar en esta materia. ¿Quieres descartarlos y continuar?');
 
   useEffect(() => {
@@ -904,7 +955,12 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       } else {
         resetClassForm();
       }
+    } else if (route.editor === 'exam' && route.examId) {
+      setImportFile(null);
+      setQuestions([]);
+      void loadExamForEdit(route.examId, pathname);
     } else {
+      setExamSnapshot('');
       setNewExamTitle('');
       setNewExamDesc('');
       setNewExamTime(0);
@@ -1427,9 +1483,31 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                                 <FileText size={16} color="#0073A5" />
                                 <strong>{ex.titulo}</strong>
                               </div>
-                              <span style={{ fontSize: '11px', color: '#64748B' }}>
-                                Límite: {ex.limite_tiempo > 0 ? `${ex.limite_tiempo} minutos` : 'Sin límite'}
-                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '11px', color: '#64748B' }}>
+                                  Límite: {ex.limite_tiempo > 0 ? `${ex.limite_tiempo} minutos` : 'Sin límite'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => { editorInitialized.current = null; router.push(`${coursePath(basePath, selectedCourse.id, 'examenes')}/${ex.id}/editar`); }}
+                                  style={{ border: 'none', background: 'none', color: '#0073A5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  className="teacher-icon-action"
+                                  aria-label={`Editar examen: ${ex.titulo}`}
+                                  title="Editar examen"
+                                >
+                                  <Pencil size={16} /> <span>Editar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteExam(ex.id, ex.titulo)}
+                                  style={{ border: 'none', background: 'none', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  className="teacher-icon-action"
+                                  aria-label={`Eliminar examen: ${ex.titulo}`}
+                                  title="Eliminar examen"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
                             </div>
                             <p style={styles.classDescText}>{ex.descripcion}</p>
                             <p style={styles.classDescText}>{ex.modo_liberacion === 'tarea_entregada' ? `Se habilita al entregar la tarea de: ${ex.clase_requisito_titulo || 'tarea por configurar'}` : ex.modo_liberacion === 'bloqueado' ? 'Bloqueado: pendiente de habilitar por el maestro' : 'Habilitado para los alumnos'}</p>
@@ -1536,8 +1614,17 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                   )}
 
                   {/* Creador/Formulario de Examen */}
-                  {showExamBuilder && (
+                  {showExamBuilder && examFetching && (
+                    <div style={styles.emptyState} role="status">Cargando examen...</div>
+                  )}
+                  {showExamBuilder && !examFetching && (
                     <form onSubmit={handleCreateExam} style={styles.form}>
+                      {editingExamId && (
+                        <div role="note" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '12px', marginBottom: '16px', backgroundColor: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', fontSize: '13px', color: '#92400E' }}>
+                          <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                          <span>Estás editando un examen publicado. Las calificaciones que los alumnos ya obtuvieron se conservan, pero no se recalculan con los cambios.</span>
+                        </div>
+                      )}
                       <div className="form-group">
                         <label className="form-label">Título del Examen</label>
                         <input
@@ -1633,7 +1720,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
 
                       <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
                         <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={examLoading}>
-                          {examLoading ? 'Guardando examen...' : 'Guardar examen'}
+                          {examLoading ? 'Guardando examen...' : editingExamId ? 'Guardar cambios' : 'Guardar examen'}
                         </button>
                         <button type="button" onClick={() => { if (confirmLeave()) router.push(coursePath(basePath, selectedCourse.id, 'examenes')); }} className="btn btn-secondary" style={{ flex: 1 }}>
                           Cancelar
