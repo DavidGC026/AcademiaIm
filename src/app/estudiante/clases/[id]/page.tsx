@@ -215,14 +215,8 @@ export default function ClassPlayerPage({ params }: { params: Promise<{ id: stri
             presentacionNombre={classData.presentacion_nombre}
           />
 
-          {/* Descripción de Clase */}
-          <div className="card" style={{ marginBottom: '24px', marginTop: '24px' }}>
-            <h3 style={styles.sectionTitle}>Temario</h3>
-            <p style={styles.descriptionText}>{classData.descripcion}</p>
-          </div>
-
           {/* Foro */}
-          <div className="card">
+          <div className="card" style={{ marginTop: '24px' }}>
             <ForoPanel cursoId={classData.curso_id} variant="student" />
           </div>
 
@@ -611,11 +605,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     color: '#64748B',
     marginBottom: '16px',
-  },
-  descriptionText: {
-    fontSize: '14px',
-    color: 'var(--text-secondary)',
-    lineHeight: '1.6',
   },
   newCommentForm: {
     display: 'flex',
