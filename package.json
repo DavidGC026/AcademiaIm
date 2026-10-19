@@ -1,5 +1,5 @@
 {
-  "name": "temp-app",
+  "name": "imcyc-campus",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.34.4",
@@ -9,9 +9,15 @@
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint",
     "test:videos": "tsx --test tests/section-videos.test.ts",
-    "test:exams": "tsx --test tests/exam-import.test.ts tests/exam-grading.test.ts tests/exam-release.test.ts",
+    "test:exams": "tsx --test tests/exam-import.test.ts tests/exam-grading.test.ts tests/exam-release.test.ts tests/exam-selection.test.ts",
     "test:exam-api": "tsx --test tests/exam-lifecycle.integration.ts",
-    "postinstall": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs public/pdfjs/pdf.worker.min.mjs && cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs public/pdfjs/pdf.min.mjs && cp -r node_modules/pdfjs-dist/wasm public/pdfjs/"
+    "postinstall": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs public/pdfjs/pdf.worker.min.mjs && cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs public/pdfjs/pdf.min.mjs && cp -r node_modules/pdfjs-dist/wasm public/pdfjs/",
+    "test:media": "tsx --test tests/media-resources.test.ts tests/section-videos.test.ts",
+    "test:core": "tsx --test tests/campus-core.test.ts tests/class-draft.test.ts",
+    "migrate:campus": "tsx scripts/migrate-campus.ts --apply",
+    "test:assistant": "tsx --test tests/academic-assistant-context.integration.ts",
+    "test:sessions": "tsx --test tests/campus-sessions.integration.ts",
+    "test:assistant-config": "tsx --test tests/assistant-config.integration.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

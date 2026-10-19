@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Contenido y estado propios de cada despliegue
+/public/uploads/
+/storage/
+/simulated_emails.log
+/.deploy-revision
+/backups/

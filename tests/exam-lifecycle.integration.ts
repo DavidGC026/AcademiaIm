@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import mysql, { type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import type { ExamQuestion, ExamStudentResult } from '../src/lib/examTypes';
+import { getSessionAudience, getSessionCookieName } from '../src/lib/sessionConfig';
+import { migrateExamAttemptSchema, migrateExamReleaseSchema } from '../src/lib/examMigrations';
 
 const base = process.env.EXAM_QA_URL;
 
@@ -22,7 +24,7 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
   let otherCourseId = 0;
   const uploadedFiles: string[] = [];
   let groupId = 0;
-  const cookie = (id: number, roleName: string) => `auth_token=${jwt.sign({ userId: id, roleName }, process.env.JWT_SECRET!, { expiresIn: '10m' })}`;
+  const cookie = (id: number, roleName: string) => `${getSessionCookieName(url.pathname)}=${jwt.sign({ userId: id, roleName }, process.env.JWT_SECRET!, { expiresIn: '10m', audience: getSessionAudience(url.pathname) })}`;
   async function api(path: string, auth: string | null, body?: unknown, method = body === undefined ? 'GET' : 'POST') {
     const response = await fetch(base + path, { method, headers: { ...(auth ? { Cookie: auth } : {}), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, data: await response.json() };
@@ -131,6 +133,14 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
     assert.deepEqual(roster.map(row => row.alumno_id).sort((a,b) => a-b), [studentId, cohortId].sort((a,b) => a-b));
     const before = (await api(path, student)).data;
     assert.equal(before.mi_intento, null);
+    const openedList = (await api(`/api/estudiante/clases?curso_id=${courseId}`, student)).data;
+    assert.equal(openedList.exams[0].intento_fecha, null, 'Abrir el examen no lo marca como entregado.');
+    assert.equal(openedList.pendientes, 1);
+    assert.equal(openedList.progreso.done, 3);
+    const gradeBefore = (await api('/api/estudiante/calificaciones', student)).data.cursos.find((course: { id: number }) => course.id === courseId).examenes[0];
+    assert.equal(gradeBefore.completado, false);
+    assert.equal(gradeBefore.calificacion, null);
+    assert.equal(gradeBefore.fecha, null);
     assert.deepEqual(before.respuestasCorrectas, {});
     assert.ok(before.preguntas.every((q: ExamQuestion) => q.opciones.every(o => !('es_correcta' in o))));
     const duplicate = await Promise.all([api(path, student, { respuestas: correct }), api(path, student, { respuestas: correct })]);
@@ -143,7 +153,7 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
     const reset = { alumno_id: studentId, numero_intento: 1 };
     assert.equal((await api(path + '/rehabilitar', other, reset)).status, 403);
     assert.equal((await api(path + '/rehabilitar', student, reset)).status, 401);
-    assert.equal((await api(path + '/rehabilitar', teacher, { alumno_id: cohortId, numero_intento: 1 })).status, 409);
+    assert.equal((await api(path + '/rehabilitar', teacher, { alumno_id: cohortId, numero_intento: 1 })).status, 200, 'El docente puede reiniciar una apertura sin nota.');
     await db.execute("UPDATE intentos_examenes SET finalizado_at = '2026-01-01 12:00:00' WHERE examen_id = ? AND usuario_id = ?", [examenId, studentId]);
     const oldDate = (await api(path, student)).data.mi_intento.fecha;
     assert.equal((await setRelease(closed)).status, 200);
@@ -177,11 +187,15 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
     assert.equal(row.historial[0].fecha, oldDate);
     assert.deepEqual(row.historial[0].respuestas, correct);
     assert.equal(row.permite_reintento, false);
+    const gradeZero = (await api('/api/estudiante/calificaciones', student)).data.cursos.find((course: { id: number }) => course.id === courseId).examenes[0];
+    assert.equal(gradeZero.completado, true, 'La calificación cero es una entrega válida.');
+    assert.equal(Number(gradeZero.calificacion), 0);
+    assert.ok(gradeZero.fecha);
     assert.equal(results.find(row => row.alumno_id === cohortId)?.intento, null);
     assert.equal((await api(path + '/rehabilitar', teacher, reset)).status, 409);
     assert.equal((await api(path + '/rehabilitar', admin, { alumno_id: studentId, numero_intento: 2 })).status, 200);
     // Intento anterior a la función: nota existente, sin respuestas registradas.
-    await db.execute('INSERT INTO intentos_examenes (examen_id,usuario_id,calificacion) VALUES (?, ?, 65)', [examenId, cohortId]);
+    await db.execute('INSERT INTO intentos_examenes (examen_id,usuario_id,calificacion) VALUES (?, ?, 65) ON DUPLICATE KEY UPDATE calificacion = 65, intento_en_curso = NULL', [examenId, cohortId]);
     assert.equal((await api(path, cohort)).data.mi_intento.respuestas, null);
     assert.equal((await api(path, cohort, { respuestas: correct })).status, 409);
     assert.equal((await api(path + '/rehabilitar', teacher, { alumno_id: cohortId, numero_intento: 1 })).status, 200);
@@ -191,6 +205,66 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
     assert.equal(legacy.historial[0].respuestas, null);
     const [count] = await db.query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM intentos_examenes WHERE examen_id = ?', [examenId]);
     assert.equal(count[0].n, 2);
+    const sampled = await api('/api/examenes', teacher, { curso_id: courseId, titulo: 'Banco QA', limite_tiempo: 1, preguntas_mostrar: 2, preguntas: Array.from({ length: 6 }, (_, index) => ({ pregunta: `Banco ${index}`, opciones: [{ texto: 'Correcta', es_correcta: true }, { texto: 'Incorrecta', es_correcta: false }] })) });
+    assert.equal(sampled.status, 200);
+    const samplePath = `/api/examenes/${sampled.data.examenId}`;
+    assert.equal((await api(samplePath + '/liberacion', teacher, open, 'PUT')).status, 200);
+    assert.equal((await api(samplePath, student, { respuestas: {} })).status, 409, 'El reloj debe iniciar antes de aceptar una entrega.');
+    const openings = await Promise.all([api(samplePath, student), api(samplePath, student)]);
+    const opened = openings[0].data;
+    assert.equal(opened.preguntas.length, 2);
+    assert.deepEqual(opened.preguntas, openings[1].data.preguntas, 'Dos aperturas iniciales comparten selección.');
+    assert.equal(opened.inicio_intento, openings[1].data.inicio_intento);
+    assert.ok(opened.tiempo_restante <= 60 && opened.tiempo_restante > 50);
+    const bank = (await api(samplePath, teacher)).data.preguntas as ExamQuestion[];
+    const sampledCorrect = Object.fromEntries(bank.filter(question => opened.preguntas.some((item: ExamQuestion) => item.id === question.id)).map(question => [question.id, question.opciones.find(option => option.es_correcta === 1)!.id]));
+    const excluded = bank.find(question => !opened.preguntas.some((item: ExamQuestion) => item.id === question.id))!;
+    assert.equal((await api(samplePath, student, { respuestas: { ...sampledCorrect, [excluded.id]: excluded.opciones[0].id } })).status, 400);
+    assert.deepEqual((await api(samplePath, student)).data.preguntas, opened.preguntas, 'Una respuesta inválida no vuelve a sortear.');
+    // Editar enunciados y claves por la API no cambia el examen que ya está abierto.
+    const editedBank = bank.map(question => ({ ...question, pregunta: 'Texto modificado ' + question.id, opciones: question.opciones.map(option => ({ ...option, es_correcta: !Boolean(option.es_correcta) })) }));
+    assert.equal((await api(samplePath, teacher, { titulo: 'Banco editado QA', limite_tiempo: 3, preguntas_mostrar: 2, preguntas: editedBank }, 'PUT')).status, 200);
+    const frozen = (await api(samplePath, student)).data;
+    assert.deepEqual(frozen.preguntas, opened.preguntas);
+    assert.equal(frozen.exam.limite_tiempo, 1, 'Editar el tiempo sólo afecta futuras aperturas.');
+    assert.equal((await api(samplePath, student, { respuestas: sampledCorrect })).data.calificacion, 100);
+    const firstResult = (await api(samplePath, student)).data.mi_intento;
+    assert.equal((await api(samplePath + '/rehabilitar', teacher, { alumno_id: studentId, numero_intento: 1 })).status, 200);
+    const retry = (await api(samplePath, student)).data;
+    assert.equal(retry.preguntas.length, 2);
+    assert.equal(retry.mi_intento.calificacion, 100);
+    assert.equal(retry.mi_intento.fecha, firstResult.fecha);
+    assert.deepEqual(retry.respuestasCorrectas, {});
+    const [pendingRows] = await db.execute<RowDataPacket[]>('SELECT intento_en_curso FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ?', [sampled.data.examenId, studentId]);
+    const pending = typeof pendingRows[0].intento_en_curso === 'string' ? JSON.parse(pendingRows[0].intento_en_curso) : pendingRows[0].intento_en_curso;
+    pending.vence_at = new Date(Date.now() - 40_000).toISOString();
+    await db.execute('UPDATE intentos_examenes SET intento_en_curso = ?, finalizado_at = finalizado_at WHERE examen_id = ? AND usuario_id = ?', [JSON.stringify(pending), sampled.data.examenId, studentId]);
+    const late = await api(samplePath, student, { respuestas: {} });
+    assert.equal(late.status, 409);
+    assert.equal(late.data.intento_vencido, true);
+    const sampleResults = (await api(samplePath + '/resultados', teacher)).data.alumnos as ExamStudentResult[];
+    const sampleRow = sampleResults.find(row => row.alumno_id === studentId)!;
+    assert.equal(sampleRow.historial.length, 0, 'Vencer el reloj no inventa una nota ni archiva la anterior.');
+    assert.equal(sampleRow.intento?.calificacion, 100);
+    assert.equal(sampleRow.intento?.fecha, firstResult.fecha);
+    assert.equal(sampleRow.intento?.preguntas?.length, 2);
+    assert.equal(sampleRow.intento?.preguntas?.[0].pregunta, opened.preguntas[0].pregunta);
+    assert.equal(sampleRow.en_curso?.vencido, true);
+    assert.equal((await api(samplePath + '/rehabilitar', teacher, { alumno_id: studentId, numero_intento: 1 })).status, 200);
+    assert.ok((await api(samplePath, student)).data.tiempo_restante > 50);
+    // Una apertura vencida sin nota también puede reiniciarse sin crear calificación.
+    await api(samplePath, cohort);
+    const [cohortPending] = await db.execute<RowDataPacket[]>('SELECT intento_en_curso FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ?', [sampled.data.examenId, cohortId]);
+    const cohortActive = typeof cohortPending[0].intento_en_curso === 'string' ? JSON.parse(cohortPending[0].intento_en_curso) : cohortPending[0].intento_en_curso;
+    cohortActive.vence_at = new Date(Date.now() - 40_000).toISOString();
+    await db.execute('UPDATE intentos_examenes SET intento_en_curso = ?, finalizado_at = finalizado_at WHERE examen_id = ? AND usuario_id = ?', [JSON.stringify(cohortActive), sampled.data.examenId, cohortId]);
+    assert.equal((await api(samplePath, cohort, { respuestas: {} })).status, 409);
+    assert.equal((await api(samplePath + '/rehabilitar', teacher, { alumno_id: cohortId, numero_intento: 1 })).status, 200);
+    const cohortRestarted = (await api(samplePath, cohort)).data;
+    assert.equal(cohortRestarted.mi_intento, null);
+    assert.ok(cohortRestarted.tiempo_restante > 50);
+    assert.equal((await api(samplePath, teacher, undefined, 'DELETE')).status, 200);
+    assert.equal((await api(samplePath, teacher)).status, 404);
     assert.equal((await setRelease(finalTask)).status, 200);
     await db.execute('DELETE FROM clases WHERE id = ?', [finalTaskId]);
     assert.equal((await api(path, student)).data.disponible, false, 'Eliminar la tarea no libera el examen.');
@@ -202,4 +276,33 @@ test('examen: liberación manual, tarea final, permisos, historial y entregas co
     await db.end();
     for (const file of uploadedFiles) unlinkSync(file);
   }
+});
+
+
+test('migraciones aditivas conservan intentos históricos de RUA y Academia', { skip: !base }, async () => {
+  assert.ok(process.env.DB_NAME?.endsWith('_qa') && ['127.0.0.1', 'localhost'].includes(process.env.DB_HOST || ''));
+  const db = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+  try {
+    // Las tablas temporales ocultan sólo en esta conexión las tablas QA del mismo nombre.
+    await db.query('CREATE TEMPORARY TABLE examenes (id INT PRIMARY KEY, preguntas_mostrar INT DEFAULT 0)');
+    await db.query('CREATE TEMPORARY TABLE intentos_examenes (id INT PRIMARY KEY, calificacion DECIMAL(5,2), iniciado_at TIMESTAMP NULL, finalizado_at TIMESTAMP NULL, preguntas_ids JSON)');
+    await db.query("INSERT INTO examenes VALUES (1, 2)");
+    await db.query("INSERT INTO intentos_examenes VALUES (1, 82.50, '2026-01-01 08:00:00', '2026-01-01 08:10:00', '[3,7]'), (2, NULL, '2026-01-02 08:00:00', '2026-01-02 08:00:00', '[4,9]')");
+    const [before] = await db.query('SELECT id, calificacion, iniciado_at, finalizado_at, preguntas_ids FROM intentos_examenes ORDER BY id');
+    await migrateExamAttemptSchema(db); await migrateExamReleaseSchema(db);
+    await migrateExamAttemptSchema(db); await migrateExamReleaseSchema(db);
+    const [after] = await db.query('SELECT id, calificacion, iniciado_at, finalizado_at, preguntas_ids FROM intentos_examenes ORDER BY id');
+    assert.deepEqual(after, before);
+    const [settings] = await db.query<RowDataPacket[]>('SELECT preguntas_mostrar, modo_liberacion FROM examenes');
+    assert.equal(settings[0].preguntas_mostrar, 2); assert.equal(settings[0].modo_liberacion, 'abierto');
+    const [newFields] = await db.query<RowDataPacket[]>('SELECT permite_reintento, respuestas, historial, preguntas_snapshot, intento_en_curso FROM intentos_examenes ORDER BY id');
+    assert.equal(newFields[0].permite_reintento, 0); assert.equal(newFields[1].intento_en_curso, null);
+    await db.query('DROP TEMPORARY TABLE intentos_examenes');
+    await db.query('CREATE TEMPORARY TABLE intentos_examenes (id INT PRIMARY KEY, calificacion DECIMAL(5,2), iniciado_at TIMESTAMP NULL, finalizado_at TIMESTAMP NULL, permite_reintento TINYINT DEFAULT 0, respuestas JSON, historial JSON)');
+    await db.query(`INSERT INTO intentos_examenes VALUES (1, 90, '2026-02-01 10:00:00', '2026-02-01 10:10:00', 1, '{"5":21}', '[{"calificacion":60,"fecha":"2026-01-01","respuestas":null}]')`);
+    const [academyBefore] = await db.query('SELECT * FROM intentos_examenes');
+    await migrateExamAttemptSchema(db); await migrateExamAttemptSchema(db);
+    const [academyAfter] = await db.query('SELECT id, calificacion, iniciado_at, finalizado_at, permite_reintento, respuestas, historial FROM intentos_examenes');
+    assert.deepEqual(academyAfter, academyBefore);
+  } finally { await db.end(); }
 });

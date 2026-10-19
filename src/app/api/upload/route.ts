@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { isVideoFile, MAX_VIDEO_SIZE_BYTES, MAX_VIDEO_SIZE_MB, validateVideoFile } from '@/lib/videoFiles';
+import { MAX_RESOURCE_SIZE_BYTES, validateResourceFile } from '@/lib/resourceFiles';
+import { generarPortadaPdf } from '@/lib/pdfPortada';
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +18,7 @@ export async function POST(request: Request) {
     }
 
     const videoRequested = new URL(request.url).searchParams.get('tipo') === 'video';
-    if (videoRequested && Number(request.headers.get('Content-Length')) > MAX_VIDEO_SIZE_BYTES + 1024 * 1024) {
+    if (Number(request.headers.get('Content-Length')) > MAX_VIDEO_SIZE_BYTES + 1024 * 1024) {
       return NextResponse.json({ error: `El video supera los ${MAX_VIDEO_SIZE_MB} MB.` }, { status: 413 });
     }
     const formData = await request.formData();
@@ -29,6 +31,9 @@ export async function POST(request: Request) {
     if (videoRequested || isVideoFile(file.name) || file.type.startsWith('video/')) {
       const error = validateVideoFile(file);
       if (error) return NextResponse.json({ error }, { status: file.size > MAX_VIDEO_SIZE_BYTES ? 413 : 400 });
+    } else {
+      const error = validateResourceFile(file);
+      if (error) return NextResponse.json({ error }, { status: file.size > MAX_RESOURCE_SIZE_BYTES ? 413 : 400 });
     }
 
     // Asegurar directorio public/uploads
@@ -48,11 +53,13 @@ export async function POST(request: Request) {
     }
 
     const fileUrl = `/uploads/${uniqueFileName}`;
+    const portada = extension === '.pdf' ? await generarPortadaPdf(uniqueFileName) : null;
 
     return NextResponse.json({
       success: true,
       name: file.name,
       url: fileUrl,
+      ...(portada ? { portada } : {}),
     });
   } catch (error) {
     console.error('Error al subir recurso:', error);

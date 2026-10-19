@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { tieneAccesoLibro } from '@/lib/bibliotecaAcceso';
 import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { validateResourceFile } from '@/lib/resourceFiles';
 
 export const runtime = 'nodejs';
 
@@ -26,8 +27,13 @@ export async function POST(request: Request) {
   }
 
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
-  if (!file) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  const file = formData.get('file');
+  if (!(file instanceof File)) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  const validationError = validateResourceFile(file);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+  if (!MIME[extname(file.name).toLowerCase()]) {
+    return NextResponse.json({ error: 'Formatos permitidos: PDF, CSV, DOC, DOCX, XLS y XLSX.' }, { status: 400 });
+  }
 
   const dir = privateDir();
   await mkdir(dir, { recursive: true });
@@ -50,7 +56,7 @@ export async function GET(request: Request) {
   const [libros] = (await pool.execute(
     `SELECT id FROM biblioteca_libros WHERE archivo_url = ?`,
     [ref]
-  )) as any[];
+  )) as unknown as [{ id: number }[], unknown];
   const libroId = libros[0]?.id as number | undefined;
 
   if (!libroId) {
@@ -79,6 +85,7 @@ export async function GET(request: Request) {
         // decidido aún puede guardar el archivo desde el visor del navegador.
         'Content-Disposition': 'inline',
         'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch {

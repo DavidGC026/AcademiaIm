@@ -51,9 +51,13 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [hasSavedAnswers, setHasSavedAnswers] = useState(true);
   const [retryEnabled, setRetryEnabled] = useState(false);
   const [available, setAvailable] = useState(false);
+  const [expired, setExpired] = useState(false);
   const [lockedReason, setLockedReason] = useState('');
   const [requiredClassId, setRequiredClassId] = useState<number | null>(null);
   const sendingRef = useRef(false);
+  const automaticSubmissionRef = useRef(false);
+  const deadlineRef = useRef<number | null>(null);
+  const [draftKey, setDraftKey] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   
   // Timer states
@@ -71,16 +75,27 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
           setExam(data.exam);
           setQuestions(data.preguntas);
           setAvailable(Boolean(data.disponible));
+          setExpired(Boolean(data.intento_vencido));
           setLockedReason(data.motivo_bloqueo || 'El examen todavía no está habilitado.');
           setRequiredClassId(data.exam.clase_requisito_id);
           const completed = data.mi_intento && !data.mi_intento.permite_reintento;
           setSubmitted(Boolean(completed));
           setRetryEnabled(Boolean(data.mi_intento?.permite_reintento));
           setScore(completed ? data.mi_intento.calificacion : null);
-          setAnswers(completed ? data.mi_intento.respuestas || {} : {});
+          const key = data.inicio_intento ? `exam-draft-${process.env.NEXT_PUBLIC_BASE_PATH || 'academia'}-${examId}-${data.inicio_intento}` : null;
+          setDraftKey(key);
+          let draft: Record<number, number> = {};
+          try {
+            const saved = key ? JSON.parse(localStorage.getItem(key) || '{}') : {};
+            draft = Object.fromEntries(data.preguntas.filter((question: Question) => question.opciones.some(option => option.id === saved[question.id])).map((question: Question) => [question.id, saved[question.id]]));
+          } catch { /* El almacenamiento del navegador puede estar deshabilitado. */ }
+          setAnswers(completed ? data.mi_intento.respuestas || {} : draft);
           setHasSavedAnswers(!completed || data.mi_intento.respuestas !== null);
           setCorrectAnswers(data.respuestasCorrectas || {});
-          setTimeLeft(data.disponible ? data.exam.limite_tiempo * 60 : 0);
+          const seconds = data.disponible ? data.tiempo_restante ?? 0 : 0;
+          deadlineRef.current = data.exam.limite_tiempo > 0 ? Date.now() + seconds * 1000 : null;
+          automaticSubmissionRef.current = false;
+          setTimeLeft(seconds);
         } else {
           setExam(null);
         }
@@ -97,8 +112,13 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     };
   }, [examId, reload]);
 
+  useEffect(() => {
+    if (!draftKey || loading || submitted) return;
+    try { localStorage.setItem(draftKey, JSON.stringify(answers)); } catch { /* La entrega sigue disponible sin almacenamiento local. */ }
+  }, [draftKey, answers, loading, submitted]);
+
   const handleSelectOption = (questionId: number, optionId: number) => {
-    if (submitted || !available) return;
+    if (submitted || expired || !available) return;
     setAnswers({
       ...answers,
       [questionId]: optionId
@@ -106,7 +126,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   const submitExam = async (finalAnswers: Record<number, number>) => {
-    if (sendingRef.current || submitted || !available) return;
+    if (sendingRef.current || submitted || expired || !available) return;
     sendingRef.current = true;
     setSubmitting(true);
     if (timerRef.current) clearInterval(timerRef.current);
@@ -121,6 +141,9 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       if (res.ok) {
         const data = await res.json();
         setScore(data.calificacion);
+        setAnswers(data.respuestas || finalAnswers);
+        if (draftKey) { try { localStorage.removeItem(draftKey); } catch {} }
+
         setCorrectAnswers(data.respuestasCorrectas);
         setSubmitted(true);
         setHasSavedAnswers(true);
@@ -153,26 +176,22 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   };
 
   const handleAutoSubmit = useEffectEvent(() => {
-    alert('¡El tiempo se ha agotado! Tu examen será enviado automáticamente.');
     void submitExam(answers);
   });
 
   useEffect(() => {
-    if (timeLeft > 0 && !submitted && !submitting && available && !loading) {
-      timerRef.current = setInterval(() => {
-        if (timeLeft <= 1) {
-          clearInterval(timerRef.current!);
-          setTimeLeft(0);
-          handleAutoSubmit();
-        } else {
-          setTimeLeft(previous => previous - 1);
-        }
-      }, 1000);
+    if (submitted || expired || submitting || !available || loading || !exam?.limite_tiempo || automaticSubmissionRef.current) return;
+    if (timeLeft <= 0) {
+      automaticSubmissionRef.current = true;
+      const timeout = setTimeout(() => handleAutoSubmit(), 0);
+      return () => clearTimeout(timeout);
     }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [timeLeft, submitted, submitting, available, loading]);
+    timerRef.current = setInterval(() => {
+      const seconds = Math.max(0, Math.ceil(((deadlineRef.current ?? Date.now()) - Date.now()) / 1000));
+      setTimeLeft(seconds);
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [timeLeft, submitted, expired, submitting, available, loading, exam?.limite_tiempo]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -262,6 +281,8 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
         </div>
       )}
 
+      {expired && !submitted && <p role="alert" className="card" style={{ padding: '20px', marginBottom: '20px' }}>El tiempo de este intento terminó. Tus respuestas se conservan en este navegador. Solicita a tu maestro que habilite otro intento; las calificaciones guardadas permanecen sin cambios.</p>}
+      {!submitted && !expired && exam.limite_tiempo > 0 && <p style={{ marginBottom: '20px', color: 'var(--text-secondary)', fontSize: '14px' }}>El tiempo comienza al abrir el examen y continúa al recargar o cerrar la página. Tus respuestas se conservan en este navegador. Al terminar el tiempo se envían automáticamente.</p>}
       <form onSubmit={handleSubmit} style={styles.form}>
         <div style={styles.questionsList}>
           {questions.map((q, qIdx) => {
@@ -314,7 +335,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
                           type="radio"
                           name={`pregunta-${q.id}`}
                           checked={isSelected}
-                          disabled={submitted || submitting}
+                          disabled={submitted || expired || submitting}
                           onChange={() => handleSelectOption(q.id, opt.id)}
                           style={{ accentColor: '#0073A5', flexShrink: 0 }}
                         />
@@ -338,7 +359,7 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
             type="submit" 
             className="btn btn-primary" 
             style={styles.submitBtn} 
-            disabled={submitting}
+            disabled={submitting || expired}
           >
             {submitting ? 'Enviando respuestas...' : 'Finalizar y Entregar Examen'}
           </button>
@@ -377,6 +398,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '16px',
     marginBottom: '28px',
   },
   title: {
@@ -414,6 +437,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1.5px solid #0073A5',
     borderRadius: '16px',
     padding: '24px',
+    flexWrap: 'wrap',
+    gap: '16px',
     marginBottom: '32px',
     boxShadow: '0 8px 30px rgba(0, 115, 165, 0.08)',
   },
@@ -421,6 +446,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '20px',
+    flex: '1 1 230px',
   },
   scoreCircle: {
     width: '80px',

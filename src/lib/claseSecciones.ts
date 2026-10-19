@@ -2,7 +2,7 @@ import { parseCssColor, resolveColor } from '@/lib/colorUtils';
 import { isSupportedVideoUrl } from '@/lib/videoEmbed';
 
 export type SeccionItem =
-  | { tipo: 'archivo'; nombre: string; url: string; archivo_nombre?: string }
+  | { tipo: 'archivo'; nombre: string; url: string; archivo_nombre?: string; portada?: string }
   | { tipo: 'video'; titulo: string; url: string; archivo_nombre?: string }
   | { tipo: 'biblioteca'; libro_id: number }
   | { tipo: 'enlace'; titulo: string; url: string };

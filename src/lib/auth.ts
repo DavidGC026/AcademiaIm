@@ -1,7 +1,12 @@
 import jwt from 'jsonwebtoken';
 import { cookies } from 'next/headers';
+import { getSessionAudience, getSessionCookieName, getSessionCookiePath } from './sessionConfig';
 
-const SECRET_KEY = process.env.JWT_SECRET || 'academia_imcyc_super_secret_jwt_key_2026';
+function getSecretKey(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('Configura JWT_SECRET antes de iniciar el campus.');
+  return secret;
+}
 
 export interface JWTPayload {
   userId: number;
@@ -13,20 +18,21 @@ export interface JWTPayload {
 }
 
 export function signToken(payload: JWTPayload): string {
-  return jwt.sign(payload, SECRET_KEY, { expiresIn: '7d' });
+  const { userId, email, nombre, roleId, roleName, grupo_cohorte } = payload;
+  return jwt.sign({ userId, email, nombre, roleId, roleName, grupo_cohorte }, getSecretKey(), { expiresIn: '7d', audience: getSessionAudience() });
 }
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, SECRET_KEY) as JWTPayload;
-  } catch (error) {
+    return jwt.verify(token, getSecretKey(), { audience: getSessionAudience() }) as JWTPayload;
+  } catch {
     return null;
   }
 }
 
 export async function getSession(): Promise<JWTPayload | null> {
   const cookieStore = await cookies();
-  const token = cookieStore.get('auth_token')?.value;
+  const token = cookieStore.get(getSessionCookieName())?.value;
   if (!token) return null;
   return verifyToken(token);
 }
@@ -34,16 +40,19 @@ export async function getSession(): Promise<JWTPayload | null> {
 export async function setSessionCookie(payload: JWTPayload) {
   const token = signToken(payload);
   const cookieStore = await cookies();
-  cookieStore.set('auth_token', token, {
+  cookieStore.set(getSessionCookieName(), token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7, // 7 días
-    path: '/',
+    path: getSessionCookiePath(),
   });
 }
 
 export async function clearSessionCookie() {
   const cookieStore = await cookies();
-  cookieStore.delete('auth_token');
+  cookieStore.set(getSessionCookieName(), '', {
+    httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax',
+    path: getSessionCookiePath(), expires: new Date(0),
+  });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { randomBytes } from 'node:crypto';
 import pool from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { getSession } from '@/lib/auth';
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
       const dayPart = fNac.split('-')[2] || '01';
 
       // Combinar todo
-      password = `${idPart}${patPart}${matPart}${nombrePart}${dayPart}`;
+      password = `${idPart}${patPart}${matPart}${nombrePart}${dayPart}${randomBytes(4).toString('hex')}`;
     } else {
       // Maestro/Admin: contraseña manual
       nombre = body.nombre;

@@ -58,7 +58,7 @@ export async function GET(request: Request) {
       if (cls.requiere_tarea === 1 && !cls.entrega_id) pendientes++;
     }
     for (const ex of examenes) {
-      if (ex.disponible && (ex.permite_reintento || (!ex.intento_fecha && ex.mi_calificacion == null))) pendientes++;
+      if (ex.disponible && (ex.permite_reintento || ex.mi_calificacion == null)) pendientes++;
     }
 
     const totalItems = classes.length + examenes.length;
@@ -71,7 +71,7 @@ export async function GET(request: Request) {
       }
     }
     for (const ex of examenes) {
-      if (!ex.permite_reintento && (ex.intento_fecha || ex.mi_calificacion != null)) completados++;
+      if (!ex.permite_reintento && ex.mi_calificacion != null) completados++;
     }
 
     return NextResponse.json({

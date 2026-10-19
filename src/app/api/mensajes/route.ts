@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { cleanText } from '@/lib/sanitize';
 
 export async function GET() {
   try {
@@ -28,8 +29,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    const { maestro_id, asunto, mensaje } = await request.json();
+    const { maestro_id, asunto: asuntoRaw, mensaje: mensajeRaw } = await request.json();
 
+    const asunto = cleanText(asuntoRaw, 200);
+    const mensaje = cleanText(mensajeRaw, 5000);
     if (!maestro_id || !asunto || !mensaje) {
       return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
     }

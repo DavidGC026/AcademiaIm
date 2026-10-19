@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { toAbsoluteAssetUrl } from '@/lib/assetUrl';
 import { openPdfDocument } from '@/lib/pdfLoader';
+import { campusBranding } from '@/lib/campusBranding';
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(v, max));
 
@@ -56,6 +57,8 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pdfRef = useRef<Awaited<ReturnType<typeof openPdfDocument>> | null>(null);
+  const detailUrlRef = useRef<string | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
   const [page, setPage] = useState(0);
@@ -71,6 +74,8 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
   const [contentSize, setContentSize] = useState({ w: 0, h: 0 });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [grabbing, setGrabbing] = useState(false);
+  const [detailPage, setDetailPage] = useState(-1);
+  const [detailSrc, setDetailSrc] = useState('');
 
   const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchRef = useRef({ startX: 0, startY: 0, dist: 0, pinching: false, baseZoom: 1, lastTap: 0 });
@@ -101,11 +106,10 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
   }, [isMobile]);
 
   useEffect(() => {
-    flashUI();
     return () => {
       if (uiTimer.current) clearTimeout(uiTimer.current);
     };
-  }, [flashUI]);
+  }, []);
 
   useEffect(() => {
     const el = contentRef.current;
@@ -132,7 +136,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, c.width, c.height);
       await p.render({ canvasContext: ctx, viewport: vp, canvas: c }).promise;
-      return c.toDataURL('image/jpeg', 0.85);
+      return c.toDataURL('image/jpeg', 0.94);
     } catch {
       return null;
     }
@@ -140,26 +144,37 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    let openedPdf: Awaited<ReturnType<typeof openPdfDocument>> | null = null;
     (async () => {
       setLoading(true);
       setError(null);
       setPages([]);
+      pdfRef.current = null;
       setPage(0);
+      setTotal(0);
+      setZoom(1);
       setProgress(0);
       try {
-        const res = await fetch(toAbsoluteAssetUrl(fileUrl), secure ? { credentials: 'include' } : undefined);
+        const res = await fetch(toAbsoluteAssetUrl(fileUrl), { signal: controller.signal, ...(secure ? { credentials: 'include' } : {}) });
         if (!res.ok) throw new Error('No se pudo cargar el documento');
         const buf = await res.arrayBuffer();
         const pdf = await openPdfDocument({ data: buf });
+        openedPdf = pdf;
+        if (cancelled) {
+          void pdf.loadingTask.destroy().catch(() => {});
+          return;
+        }
+        pdfRef.current = pdf;
         const imgs: string[] = [];
         for (let i = 1; i <= pdf.numPages; i++) {
           if (cancelled) return;
           const img = await renderPage(pdf, i);
-          if (img) imgs.push(img);
+          if (!img) throw new Error(`No se pudo preparar la página ${i} del documento`);
+          imgs.push(img);
           setProgress(Math.round((i / pdf.numPages) * 100));
         }
         if (cancelled) {
-          void pdf.cleanup();
           return;
         }
         setPages(imgs);
@@ -172,8 +187,75 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
     })();
     return () => {
       cancelled = true;
+      controller.abort();
+      void openedPdf?.loadingTask.destroy().catch(() => {});
+      if (pdfRef.current === openedPdf) pdfRef.current = null;
     };
   }, [fileUrl, secure, renderPage]);
+
+  // Las páginas del libro usan previsualizaciones ligeras. Al acercar, se
+  // redibuja únicamente la página visible desde el PDF original y se sustituye
+  // la previsualización comprimida por una imagen PNG de alta resolución.
+  useEffect(() => {
+    if (!zoomActive || loading || !pdfRef.current) {
+      if (detailUrlRef.current) URL.revokeObjectURL(detailUrlRef.current);
+      detailUrlRef.current = null;
+      setDetailSrc('');
+      setDetailPage(-1);
+      return;
+    }
+
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const pdf = pdfRef.current;
+        if (!pdf) return;
+        const pdfPage = await pdf.getPage(page + 1);
+        if (cancelled) return;
+
+        const baseVp = pdfPage.getViewport({ scale: 1 });
+        const container = isMobile ? containerRef.current : contentRef.current;
+        const availableW = Math.max(240, (container?.clientWidth || 800) - 32);
+        const availableH = Math.max(240, (container?.clientHeight || 700) - 32);
+        const fitScale = Math.min(availableW / baseVp.width, availableH / baseVp.height);
+        const displayW = Math.max(1, Math.floor(baseVp.width * fitScale * zoom));
+        const displayH = Math.max(1, Math.floor(baseVp.height * fitScale * zoom));
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const pixelRatioLimit = Math.sqrt(20_000_000 / (displayW * displayH));
+        const renderPixelRatio = clamp(Math.min(dpr, pixelRatioLimit), 0.6, 2);
+        const viewport = pdfPage.getViewport({ scale: fitScale * zoom * renderPixelRatio });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) return;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        renderTask = pdfPage.render({ canvasContext: ctx, viewport, canvas });
+        await renderTask.promise;
+        if (cancelled) return;
+
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob || cancelled) return;
+        const nextUrl = URL.createObjectURL(blob);
+        if (detailUrlRef.current) URL.revokeObjectURL(detailUrlRef.current);
+        detailUrlRef.current = nextUrl;
+        setDetailSrc(nextUrl);
+        setDetailPage(page);
+      })().catch(() => {});
+    }, 160);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      renderTask?.cancel();
+    };
+  }, [zoomActive, zoom, page, loading, isMobile, contentSize.w, contentSize.h]);
+
+  useEffect(() => () => {
+    if (detailUrlRef.current) URL.revokeObjectURL(detailUrlRef.current);
+  }, []);
 
   const next = useCallback(() => {
     if (flipbookActive) {
@@ -394,6 +476,12 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
   if (loading) {
     return (
       <div style={shell}>
+        <header style={topBar}>
+          <button type="button" onClick={onClose} style={iconBtn} aria-label="Cerrar lectura">
+            <ArrowLeft size={18} />
+          </button>
+          <span style={titleStyle}>{title}</span>
+        </header>
         <div style={loadingBox}>
           <div style={spinner} />
           <p style={{ color: '#c9d1d9', fontSize: '14px', margin: '16px 0 8px' }}>
@@ -458,7 +546,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
             // eslint-disable-next-line @next/next/no-img-element
             <img
               ref={imgRef}
-              src={pages[page]}
+              src={detailPage === page && detailSrc ? detailSrc : pages[page]}
               alt={`Página ${page + 1}`}
               draggable={false}
               style={{
@@ -466,13 +554,13 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
                 maxHeight: '100%',
                 objectFit: 'contain',
                 transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
-                transition: touchRef.current.pinching || panRef.current.dragging ? 'none' : 'transform 0.2s ease',
+                transition: 'none',
               }}
             />
           ) : (
             <div style={{ color: '#fff', textAlign: 'center', padding: '32px' }}>
               <p style={{ fontWeight: 700, fontSize: '18px' }}>Fin del libro</p>
-              <p style={{ opacity: 0.7, fontSize: '13px' }}>Solo lectura · Academia IMCYC</p>
+              <p style={{ opacity: 0.7, fontSize: '13px' }}>Solo lectura · {campusBranding.name}</p>
             </div>
           )}
         </div>
@@ -480,6 +568,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
         <div style={{ ...mobileBottom, opacity: showUI ? 1 : 0.35 }}>
           <input
             type="range"
+            aria-label="Página del libro"
             min={0}
             max={maxPageIndex}
             value={page}
@@ -488,10 +577,10 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '4px' }}>
-              <button type="button" onClick={prev} disabled={page <= 0} style={iconBtn}>
+              <button type="button" onClick={prev} disabled={page <= 0} style={iconBtn} aria-label="Página anterior">
                 <ChevronLeft size={20} />
               </button>
-              <button type="button" onClick={next} disabled={page >= maxPageIndex} style={iconBtn}>
+              <button type="button" onClick={next} disabled={page >= maxPageIndex} style={iconBtn} aria-label="Página siguiente">
                 <ChevronRight size={20} />
               </button>
             </div>
@@ -499,13 +588,13 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
               {page + 1} / {total}
             </span>
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-              <button type="button" onClick={() => { setZoom((z) => clamp(z - 0.5, 1, 4)); setOffset({ x: 0, y: 0 }); }} disabled={zoom <= 1} style={iconBtn}>
+              <button type="button" onClick={() => { setZoom((z) => clamp(z - 0.5, 1, 4)); setOffset({ x: 0, y: 0 }); }} disabled={zoom <= 1} style={iconBtn} aria-label="Alejar">
                 <ZoomOut size={18} />
               </button>
               <span style={{ color: zoom > 1 ? '#58a6ff' : 'rgba(255,255,255,0.6)', fontSize: '11px', minWidth: '36px', textAlign: 'center' }}>
                 {Math.round(zoom * 100)}%
               </span>
-              <button type="button" onClick={() => setZoom((z) => clamp(z + 0.5, 1, 4))} style={iconBtn}>
+              <button type="button" onClick={() => setZoom((z) => clamp(z + 0.5, 1, 4))} style={iconBtn} aria-label="Acercar">
                 <ZoomIn size={18} />
               </button>
             </div>
@@ -551,11 +640,11 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
             {viewMode === 'spread' ? <FileText size={16} /> : <BookOpen size={16} />}
           </button>
           <span style={divider} />
-          <button type="button" onClick={prev} disabled={page <= 0} style={iconBtn}>
+          <button type="button" onClick={prev} disabled={page <= 0} style={iconBtn} aria-label="Página anterior">
             <ChevronLeft size={16} />
           </button>
           <span style={{ color: '#8b949e', fontSize: '12px', minWidth: '72px', textAlign: 'center' }}>{pageLabel}</span>
-          <button type="button" onClick={next} disabled={page >= maxPageIndex} style={iconBtn}>
+          <button type="button" onClick={next} disabled={page >= maxPageIndex} style={iconBtn} aria-label="Página siguiente">
             <ChevronRight size={16} />
           </button>
           <span style={divider} />
@@ -568,6 +657,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
       <div style={{ padding: '8px 16px', background: 'rgba(22,27,34,0.6)', flexShrink: 0 }}>
         <input
           type="range"
+            aria-label="Página del libro"
           min={0}
           max={maxPageIndex}
           value={page}
@@ -597,7 +687,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
             <div style={{ flexShrink: 0, margin: 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.5)', borderRadius: '4px', overflow: 'hidden' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={pages[page]}
+                src={detailPage === page && detailSrc ? detailSrc : pages[page]}
                 alt={`Página ${page + 1}`}
                 draggable={false}
                 style={{ display: 'block', height: fitHeight ? fitHeight * zoom : undefined, width: 'auto', maxWidth: 'none' }}
@@ -657,7 +747,7 @@ export default function BookFlipViewer({ fileUrl, title, onClose, secure = false
                   }}
                 >
                   <p style={{ fontWeight: 700, fontSize: '22px', marginBottom: '8px' }}>Fin del libro</p>
-                  <p style={{ opacity: 0.85, fontSize: '13px' }}>Solo lectura · Academia IMCYC</p>
+                  <p style={{ opacity: 0.85, fontSize: '13px' }}>Solo lectura · {campusBranding.name}</p>
                 </div>
               </FlipPage>
             </HTMLFlipBook>

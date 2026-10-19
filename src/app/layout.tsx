@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { campusBranding } from '@/lib/campusBranding';
 
 export const metadata: Metadata = {
-  title: 'Diplomado IMCYC - LMS Diplomados del Cemento y Concreto',
-  description: 'Plataforma educativa para profesionales de la construcción e industria del concreto en México.',
+  title: campusBranding.title,
+  description: campusBranding.description,
 };
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -14,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="es" data-campus={campusBranding.id}>
       <head>
         {basePath ? (
           <script

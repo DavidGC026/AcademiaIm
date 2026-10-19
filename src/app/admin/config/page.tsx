@@ -2,11 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { Settings, Save, Sparkles, Key, AlertTriangle } from 'lucide-react';
+import { toAssetUrl } from '@/lib/assetUrl';
 
 export default function ConfigPage() {
-  const [provider, setProvider] = useState('gemini');
+  const [provider, setProvider] = useState('openai');
+  const [model, setModel] = useState('gpt-5.6-luna');
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
+  const [storedProvider, setStoredProvider] = useState('openai');
+  const [managedByEnvironment, setManagedByEnvironment] = useState(false);
+  const [modelManagedByEnvironment, setModelManagedByEnvironment] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
@@ -14,11 +19,15 @@ export default function ConfigPage() {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/api/admin/config');
+      const res = await fetch(toAssetUrl('/api/admin/config'));
       if (res.ok) {
         const data = await res.json();
         setProvider(data.provider);
-        setApiKey(data.apiKey);
+        setStoredProvider(data.provider);
+        setModel(data.model || 'gpt-5.6-luna');
+        setApiKey('');
+        setManagedByEnvironment(Boolean(data.managedByEnvironment));
+        setModelManagedByEnvironment(Boolean(data.modelManagedByEnvironment));
         setHasKey(data.hasKey);
       }
     } catch (error) {
@@ -29,7 +38,9 @@ export default function ConfigPage() {
   };
 
   useEffect(() => {
-    fetchConfig();
+    // La carga es asíncrona; los cambios de estado ocurren después de resolver la petición.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchConfig();
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -39,20 +50,21 @@ export default function ConfigPage() {
     setSaving(true);
 
     try {
-      const res = await fetch('/api/admin/config', {
+      const res = await fetch(toAssetUrl('/api/admin/config'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, apiKey }),
+        body: JSON.stringify({ provider, model, apiKey }),
       });
 
       if (!res.ok) {
-        throw new Error('No se pudo guardar la configuración');
+        const failure = await res.json();
+        throw new Error(failure.error || 'No se pudo guardar la configuración');
       }
 
       setSuccessMsg('Configuración guardada correctamente.');
-      fetchConfig();
-    } catch (error: any) {
-      setErrorMsg(error.message);
+      void fetchConfig();
+    } catch (error: unknown) {
+      setErrorMsg(error instanceof Error ? error.message : 'No se pudo guardar la configuración');
     } finally {
       setSaving(false);
     }
@@ -63,13 +75,13 @@ export default function ConfigPage() {
   }
 
   return (
-    <div style={styles.container}>
+    <div className="page-container" style={styles.container}>
       <div style={styles.header}>
         <h1 style={styles.title}>Configuración del Asistente de IA</h1>
         <p style={styles.subtitle}>Define el proveedor de inteligencia artificial y administra la API Key de forma segura</p>
       </div>
 
-      <div style={styles.grid}>
+      <div className="responsive-two-column" style={styles.grid}>
         {/* Formulario */}
         <div className="card">
           <div style={styles.cardHeader}>
@@ -83,8 +95,11 @@ export default function ConfigPage() {
           <form onSubmit={handleSave} style={styles.form}>
             <div style={styles.providerGrid}>
               {/* Gemini Card */}
-              <div 
-                onClick={() => setProvider('gemini')}
+              <button
+                type="button"
+                aria-pressed={provider === 'gemini'}
+                disabled={managedByEnvironment}
+                onClick={() => { setProvider('gemini'); setApiKey(''); }}
                 style={{
                   ...styles.providerCard,
                   ...(provider === 'gemini' ? styles.activeProviderCard : {}),
@@ -95,13 +110,16 @@ export default function ConfigPage() {
                 </div>
                 <div>
                   <div style={styles.providerName}>Google Gemini</div>
-                  <div style={styles.providerDesc}>Recomendado por su alto rendimiento y precisión académica</div>
+                  <div style={styles.providerDesc}>Consulta de temas y materiales del campus</div>
                 </div>
-              </div>
+              </button>
 
               {/* OpenAI Card */}
-              <div 
-                onClick={() => setProvider('openai')}
+              <button
+                type="button"
+                aria-pressed={provider === 'openai'}
+                disabled={managedByEnvironment}
+                onClick={() => { setProvider('openai'); setApiKey(''); }}
                 style={{
                   ...styles.providerCard,
                   ...(provider === 'openai' ? styles.activeProviderCard : {}),
@@ -112,13 +130,16 @@ export default function ConfigPage() {
                 </div>
                 <div>
                   <div style={styles.providerName}>OpenAI GPT</div>
-                  <div style={styles.providerDesc}>Soporte para GPT-4o y GPT-3.5 para respuestas robustas</div>
+                  <div style={styles.providerDesc}>Contexto académico, archivos y accesos directos</div>
                 </div>
-              </div>
+              </button>
 
               {/* Grok Card */}
-              <div 
-                onClick={() => setProvider('grok')}
+              <button
+                type="button"
+                aria-pressed={provider === 'grok'}
+                disabled={managedByEnvironment}
+                onClick={() => { setProvider('grok'); setApiKey(''); }}
                 style={{
                   ...styles.providerCard,
                   ...(provider === 'grok' ? styles.activeProviderCard : {}),
@@ -131,8 +152,28 @@ export default function ConfigPage() {
                   <div style={styles.providerName}>xAI Grok</div>
                   <div style={styles.providerDesc}>Conexión con la API oficial de X.AI para respuestas precisas</div>
                 </div>
-              </div>
+              </button>
             </div>
+
+            {provider === 'openai' && (
+              <div className="form-group" style={{ marginTop: '20px' }}>
+                <label className="form-label" htmlFor="openai-model">Modelo de OpenAI</label>
+                <select
+                  id="openai-model"
+                  disabled={modelManagedByEnvironment}
+                  className="form-select"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  <option value="gpt-5.6-luna">GPT-5.6 Luna — menor costo y alto volumen</option>
+                  <option value="gpt-5.6-terra">GPT-5.6 Terra — equilibrio de calidad y costo</option>
+                  <option value="gpt-5.6-sol">GPT-5.6 Sol — máxima capacidad</option>
+                </select>
+                <span style={styles.inputHelp}>
+                  Selecciona el modelo habilitado para la cuenta del campus.
+                </span>
+              </div>
+            )}
 
             <div className="form-group" style={{ marginTop: '24px' }}>
               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -142,11 +183,13 @@ export default function ConfigPage() {
                 type="password"
                 className="form-input"
                 value={apiKey}
+                disabled={managedByEnvironment}
+                autoComplete="off"
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={hasKey ? "••••••••••••••••••••••••" : "Introduce la clave de API..."}
+                placeholder={hasKey && provider === storedProvider ? "••••••••••••••••••••••••" : "Introduce la clave de API..."}
               />
               <span style={styles.inputHelp}>
-                {hasKey 
+                {managedByEnvironment ? "La conexión de OpenAI se administra en el servidor. Los cambios de este formulario no reemplazan esa clave." : hasKey && provider === storedProvider
                   ? "Ya hay una clave configurada en el sistema. Escribe una nueva si deseas reemplazarla."
                   : "Por favor, introduce una clave válida para activar el chatbot del estudiante."}
               </span>
@@ -171,13 +214,13 @@ export default function ConfigPage() {
               <Sparkles size={18} /> Asistente de IA Académico
             </h4>
             <p style={{ ...styles.infoText, marginTop: '12px' }}>
-              El asistente de IA flotante se mostrará en el panel del estudiante y responderá de forma inteligente a preguntas sobre:
+              El asistente se muestra en todo el panel del estudiante y utiliza únicamente la información académica a la que ese alumno tiene acceso:
             </p>
             <ul style={styles.bullets}>
-              <li>Química del cemento e hidratación del clínker.</li>
-              <li>Tipos de concreto, aditivos y dosificación.</li>
-              <li>Normas de control de calidad y ensayos de compresión.</li>
-              <li>Dudas particulares de cada módulo lectivo.</li>
+              <li>Materias, clases, pendientes y próximas sesiones.</li>
+              <li>Accesos directos a la clase o evaluación correspondiente.</li>
+              <li>Temario y presentación de la clase que el alumno tiene abierta.</li>
+              <li>Explicaciones y pistas sin resolver tareas ni exámenes.</li>
             </ul>
             <p style={styles.infoText}>
               Para que funcione correctamente, el backend realiza la petición usando la API del proveedor seleccionado, manteniendo la API Key totalmente oculta de la red del cliente.
@@ -189,7 +232,7 @@ export default function ConfigPage() {
               <AlertTriangle size={18} /> Seguridad de las Llaves
             </h4>
             <p style={{ ...styles.infoText, marginTop: '12px' }}>
-              Las claves de API se encriptan al ser almacenadas en la base de datos MySQL local. No compartas accesos ni expongas las llaves en repositorios de código.
+              La clave nunca se envía al navegador. Para mayor seguridad en producción, configura <code>OPENAI_API_KEY</code> en el entorno del servidor; la clave guardada aquí se mantiene como alternativa administrada en MySQL.
             </p>
           </div>
         </div>
@@ -252,6 +295,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   providerCard: {
     display: 'flex',
+    textAlign: 'left',
+    background: 'transparent',
     alignItems: 'center',
     gap: '16px',
     padding: '16px',

@@ -3,6 +3,7 @@ import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { mkdir, writeFile, readFile } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { validateResourceFile } from '@/lib/resourceFiles';
 
 export const runtime = 'nodejs';
 
@@ -16,8 +17,10 @@ export async function POST(request: Request) {
   }
 
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
-  if (!file) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  const file = formData.get('file');
+  if (!(file instanceof File)) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  const validationError = validateResourceFile(file);
+  if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
   if (extname(file.name).toLowerCase() !== '.pdf') {
     return NextResponse.json({ error: 'Solo se permiten archivos PDF' }, { status: 400 });
   }
@@ -41,7 +44,7 @@ export async function GET(request: Request) {
   const [rows] = (await pool.execute(
     `SELECT id FROM biblioteca_revistas WHERE archivo_url = ?`,
     [ref]
-  )) as any[];
+  )) as unknown as [{ id: number }[], unknown];
   if (rows.length === 0) {
     return NextResponse.json({ error: 'Revista no encontrada' }, { status: 404 });
   }

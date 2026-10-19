@@ -1,6 +1,10 @@
 import CourseManagement from '@/components/CourseManagement';
+import { getSession } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 import '@/app/maestro/teacher.css';
 
-export default function MateriasLayout() {
-  return <CourseManagement role="administrador" />;
+export default async function MateriasLayout() {
+  const session = await getSession();
+  if (!session) redirect('/');
+  return <CourseManagement role="administrador" userId={session.userId} />;
 }

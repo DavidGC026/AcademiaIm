@@ -6,6 +6,7 @@ import { canManageExam, getExam } from '@/lib/examAccess';
 import { ensureExamAttemptSchema } from '@/lib/examSchema';
 import { attemptSnapshot, readExamJson } from '@/lib/examGrading';
 import { examAvailability } from '@/lib/examRelease';
+import { readActiveAttempt, remainingSeconds, submissionExpired } from '@/lib/examAttemptState';
 import type { ExamAttemptSnapshot } from '@/lib/examTypes';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -20,12 +21,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     await ensureExamAttemptSchema();
     const [rows] = await pool.execute<(RowDataPacket & {
       alumno_id: number; nombre: string; email: string; inscrito: number;
-      calificacion: number | null; finalizado_at: Date; respuestas: unknown; historial: unknown; permite_reintento: number;
+      calificacion: number | null; iniciado_at: Date; finalizado_at: Date; respuestas: unknown; historial: unknown; preguntas_ids: unknown; preguntas_snapshot: unknown; intento_en_curso: unknown; permite_reintento: number;
       entrega_requisito_id: number | null;
     })[]>(
       `SELECT resultados.* FROM (
         SELECT u.id AS alumno_id, u.nombre, u.email, i.id AS intento_id,
-          i.calificacion, i.finalizado_at, i.respuestas, i.historial, i.permite_reintento, t.id AS entrega_requisito_id,
+          i.calificacion, i.iniciado_at, i.finalizado_at, i.respuestas, i.historial, i.preguntas_ids, i.preguntas_snapshot, i.intento_en_curso, i.permite_reintento, t.id AS entrega_requisito_id,
           (EXISTS (SELECT 1 FROM curso_estudiantes ce WHERE ce.curso_id = ? AND ce.estudiante_id = u.id)
            OR EXISTS (SELECT 1 FROM curso_grupos cg JOIN grupos_cohortes g ON g.id = cg.grupo_id
                       WHERE cg.curso_id = ? AND g.nombre = u.grupo_cohorte)) AS inscrito
@@ -35,13 +36,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       ) resultados WHERE inscrito = 1 OR intento_id IS NOT NULL ORDER BY nombre, alumno_id`,
       [exam.curso_id, exam.curso_id, id, exam.clase_requisito_id]
     );
-    return NextResponse.json({ alumnos: rows.map(row => ({
+    return NextResponse.json({ alumnos: rows.map(row => {
+      const active = readActiveAttempt(row.intento_en_curso);
+      return ({
       ...examAvailability(exam, exam.clase_requisito_titulo !== null ? { titulo: exam.clase_requisito_titulo, entregada: row.entrega_requisito_id != null } : null),
       alumno_id: row.alumno_id, nombre: row.nombre, email: row.email,
       inscrito: Boolean(row.inscrito) && exam.curso_estado === 'aprobado',
       permite_reintento: Boolean(row.permite_reintento),
+      en_curso: active ? { iniciado_at: active.iniciado_at, tiempo_restante: remainingSeconds(active), vencido: submissionExpired(active) } : row.intento_id != null && row.calificacion == null ? { iniciado_at: new Date(row.iniciado_at).toISOString(), tiempo_restante: null, vencido: false } : null,
       intento: attemptSnapshot(row), historial: readExamJson<ExamAttemptSnapshot[]>(row.historial, []),
-    })) });
+    }); }) });
   } catch (error) {
     console.error('Error al consultar resultados:', error);
     return NextResponse.json({ error: 'No se pudieron cargar los resultados del examen' }, { status: 500 });

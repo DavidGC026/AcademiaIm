@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
+import { cleanText, cleanTextOrNull } from '@/lib/sanitize';
 
 async function puedeEditarCurso(cursoId: number, session: { userId: number; roleName: string }) {
   if (session.roleName === 'administrador') return true;
@@ -67,8 +68,10 @@ export async function POST(
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
     }
 
-    const { nombre, cargo, biografia, foto_url, orden } = await request.json();
-    if (!nombre?.trim() || !biografia?.trim()) {
+    const body = await request.json();
+    const nombreVal = cleanText(body.nombre, 150);
+    const biografiaVal = cleanText(body.biografia, 5000);
+    if (!nombreVal || !biografiaVal) {
       return NextResponse.json({ error: 'Nombre y biografía son obligatorios' }, { status: 400 });
     }
 
@@ -77,11 +80,11 @@ export async function POST(
        VALUES (?, ?, ?, ?, ?, ?)`,
       [
         cursoId,
-        String(nombre).trim(),
-        cargo?.trim() || null,
-        foto_url?.trim() || null,
-        String(biografia).trim(),
-        Number(orden) || 0,
+        nombreVal,
+        cleanTextOrNull(body.cargo, 150),
+        cleanTextOrNull(body.foto_url, 2000),
+        biografiaVal,
+        Number(body.orden) || 0,
       ]
     )) as any[];
 
@@ -110,8 +113,10 @@ export async function PUT(
     const bioId = new URL(request.url).searchParams.get('bio_id');
     if (!bioId) return NextResponse.json({ error: 'bio_id requerido' }, { status: 400 });
 
-    const { nombre, cargo, biografia, foto_url, orden } = await request.json();
-    if (!nombre?.trim() || !biografia?.trim()) {
+    const body = await request.json();
+    const nombreVal = cleanText(body.nombre, 150);
+    const biografiaVal = cleanText(body.biografia, 5000);
+    if (!nombreVal || !biografiaVal) {
       return NextResponse.json({ error: 'Nombre y biografía son obligatorios' }, { status: 400 });
     }
 
@@ -120,11 +125,11 @@ export async function PUT(
        SET nombre = ?, cargo = ?, foto_url = ?, biografia = ?, orden = ?
        WHERE id = ? AND curso_id = ?`,
       [
-        String(nombre).trim(),
-        cargo?.trim() || null,
-        foto_url?.trim() || null,
-        String(biografia).trim(),
-        Number(orden) || 0,
+        nombreVal,
+        cleanTextOrNull(body.cargo, 150),
+        cleanTextOrNull(body.foto_url, 2000),
+        biografiaVal,
+        Number(body.orden) || 0,
         bioId,
         cursoId,
       ]

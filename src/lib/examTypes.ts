@@ -30,6 +30,7 @@ export interface ExamDetails extends ExamReleaseConfig {
   titulo: string;
   descripcion: string;
   limite_tiempo: number;
+  preguntas_mostrar: number;
   curso_nombre: string;
   clase_requisito_titulo: string | null;
 }
@@ -38,6 +39,9 @@ export interface ExamAttemptSnapshot {
   calificacion: number;
   fecha: string;
   respuestas: Record<number, number> | null;
+  iniciado_at?: string;
+  preguntas_ids?: number[] | null;
+  preguntas?: ExamQuestion[] | null;
 }
 
 export interface ExamStudentResult extends ExamAvailability {
@@ -46,6 +50,7 @@ export interface ExamStudentResult extends ExamAvailability {
   email: string;
   inscrito: boolean;
   permite_reintento: boolean;
+  en_curso?: { iniciado_at: string; tiempo_restante: number | null; vencido: boolean } | null;
   intento: ExamAttemptSnapshot | null;
   historial: ExamAttemptSnapshot[];
 }

@@ -20,6 +20,7 @@ export default async function MaestroLayout({
   }
 
   const user = {
+    id: session.userId,
     nombre: session.nombre,
     email: session.email,
     role: session.roleName,

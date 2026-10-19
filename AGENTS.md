@@ -2,8 +2,8 @@
 
 ## Stack
 
-- Next.js 16 (App Router), React 19, MySQL, despliegue bajo `/Academia`
-- Base path producción: `NEXT_PUBLIC_BASE_PATH=/Academia`
+- Next.js 16 (App Router), React 19, MySQL, despliegues bajo `/Academia` y `/ruadiplo`
+- Base path por instalación: `NEXT_PUBLIC_BASE_PATH=/Academia` o `/ruadiplo`; fuente canónica compartida.
 
 ## Paquetes: pnpm obligatorio
 
@@ -28,7 +28,7 @@ Sustituir el destino de ejemplo por el servidor autorizado. Ver `DESPLIEGUE.md`.
 El script envía el commit actual, compila en una carpeta aparte con Corepack y pnpm,
 respalda aplicación y base, conserva los archivos cargados y verifica PM2 antes de
 anunciar éxito. Para compilar sin inicializar la base, usar
-`ACADEMIA_SKIP_DB_INIT=1 pnpm build`; el servicio debe ejecutar la inicialización.
+`ACADEMIA_SKIP_DB_INIT=1 DB_AUTO_INIT=0 pnpm build`. En producción se ejecuta únicamente `pnpm migrate:campus`; nunca las semillas de `initDb`.
 
 ## Convenciones de código
 

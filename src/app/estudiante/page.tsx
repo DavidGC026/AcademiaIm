@@ -1,15 +1,14 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { toAssetUrl } from '@/lib/assetUrl';
-import { useState, useEffect } from 'react';
+import { resolveColor, withAlpha } from '@/lib/colorUtils';
+import { useState, useEffect, useEffectEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   BookOpen, 
-  Play, 
   CheckCircle, 
-  Layers,
   Users,
-  FileText,
   Bell,
   Mail,
   Send,
@@ -19,58 +18,22 @@ import {
   UserPlus,
   Award,
 } from 'lucide-react';
+import { campusBranding, isInnovationCampus } from '@/lib/campusBranding';
+
+const MarcoAprendizaje = dynamic(() => import('@/components/MarcoAprendizaje'), {
+  ssr: false,
+  loading: () => <div style={{ padding: '16px', color: '#64748B', fontSize: '13px' }}>Cargando marco del diplomado…</div>,
+});
 
 interface Course {
   id: number;
   nombre: string;
   descripcion: string;
   imagen?: string | null;
+  color?: string | null;
+  color_lecturas?: string | null;
   creador_nombre: string;
   created_at: string;
-}
-
-interface ClassItem {
-  id: number;
-  titulo: string;
-  descripcion: string;
-  video_url: string;
-  requiere_tarea?: number | boolean;
-  entrega_estado: 'entregado' | 'calificado' | null;
-  calificacion: number | null;
-}
-
-interface ProgressStats {
-  done: number;
-  total: number;
-  pct: number;
-}
-
-function computeProgress(classes: ClassItem[], exams: ExamItem[]): ProgressStats {
-  let done = 0;
-  let total = 0;
-
-  for (const c of classes) {
-    if (Number(c.requiere_tarea) === 1) {
-      total += 1;
-      if (c.entrega_estado === 'entregado' || c.entrega_estado === 'calificado') {
-        done += 1;
-      }
-    }
-  }
-
-  for (const ex of exams) {
-    total += 1;
-    if (!ex.permite_reintento && ex.mi_calificacion !== null && ex.mi_calificacion !== undefined) {
-      done += 1;
-    }
-  }
-
-  if (total === 0 && classes.length > 0) {
-    return { done: 0, total: classes.length, pct: 0 };
-  }
-
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { done, total, pct };
 }
 
 function ProgressBar({
@@ -79,14 +42,16 @@ function ProgressBar({
   total,
   compact = false,
   label = 'Progreso',
+  accentColor,
 }: {
   pct: number;
   done: number;
   total: number;
   compact?: boolean;
   label?: string;
+  accentColor?: string;
 }) {
-  const barColor = pct === 100 ? '#10B981' : '#0073A5';
+  const barColor = pct === 100 ? '#10B981' : (accentColor || 'var(--accent)');
   const showLabel = label.length > 0;
   return (
     <div style={{ width: '100%' }}>
@@ -133,16 +98,9 @@ function ProgressBar({
   );
 }
 
-interface ExamItem {
-  id: number;
-  curso_id: number;
-  titulo: string;
-  descripcion: string;
-  limite_tiempo: number;
-  mi_calificacion: number | null;
-  intento_fecha: string | null;
-  permite_reintento: number;
-}
+interface StudentNotification { id: number; leida: boolean | number; titulo: string; mensaje: string; created_at: string; }
+interface StudentTeacher { id: number; nombre: string; email?: string; }
+interface GroupRequest { id: number; grupo_nombre: string; grupo_codigo: string; estado: 'pendiente' | 'aprobado' | 'rechazado'; }
 
 export default function StudentDashboard() {
   const [courses, setCourses] = useState<Course[]>([]);
@@ -156,11 +114,11 @@ export default function StudentDashboard() {
   const [syllabusLoading, setSyllabusLoading] = useState(false);
 
   // Estados de Notificaciones
-  const [notificaciones, setNotificaciones] = useState<any[]>([]);
+  const [notificaciones, setNotificaciones] = useState<StudentNotification[]>([]);
   const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
   // Estados de Mensajería con Profesores
-  const [maestros, setMaestros] = useState<any[]>([]);
+  const [maestros, setMaestros] = useState<StudentTeacher[]>([]);
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [messageForm, setMessageForm] = useState({
     maestro_id: '',
@@ -171,19 +129,20 @@ export default function StudentDashboard() {
   const [messageSuccess, setMessageSuccess] = useState(false);
 
   // Estadísticas Académicas (KPIs)
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<{ cursosActivos: number; tareasEntregadas: number; promedio: string | number | null }>({
     cursosActivos: 0,
     tareasEntregadas: 0,
-    promedio: '94.5'
+    promedio: null
   });
 
   // Estados de unirse a un grupo / cohorte
   const [grupoCohorte, setGrupoCohorte] = useState<string | null>(null);
-  const [solicitudesGrupo, setSolicitudesGrupo] = useState<any[]>([]);
+  const [solicitudesGrupo, setSolicitudesGrupo] = useState<GroupRequest[]>([]);
   const [codigoGrupo, setCodigoGrupo] = useState('');
   const [grupoLoading, setGrupoLoading] = useState(true);
   const [joinError, setJoinError] = useState('');
   const [joinSuccess, setJoinSuccess] = useState('');
+  const [showMarco, setShowMarco] = useState(false);
 
   const fetchCourses = async () => {
     try {
@@ -397,61 +356,38 @@ export default function StudentDashboard() {
       setCodigoGrupo('');
       fetchStudentGroup();
       if (data.tipo === 'materia') fetchCourses();
-    } catch (err: any) {
-      setJoinError(err.message);
+    } catch (err: unknown) {
+      setJoinError(err instanceof Error ? err.message : 'No se pudo solicitar el acceso. Intenta de nuevo.');
     }
   };
 
-  useEffect(() => {
-    fetchCourses();
-    fetchStats();
-    fetchStudentGroup();
-    fetchNotifications();
-    fetchMaestros();
-  }, []);
+  const loadDashboard = useEffectEvent(() => {
+    void Promise.all([fetchCourses(), fetchStats(), fetchStudentGroup(), fetchNotifications(), fetchMaestros()]);
+  });
+  // Start independent requests on mount; their responses update the dashboard.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadDashboard(); }, []);
 
   const unreadNotifCount = notificaciones.filter(n => !n.leida).length;
-
-  const getStatusBadge = (status: string | null, grade: number | null) => {
-    if (status === 'calificado') {
-      return (
-        <span className="badge badge-approved" style={styles.badge}>
-          <Award size={10} style={{ marginRight: '4px' }} />
-          Nota: {grade}
-        </span>
-      );
-    } else if (status === 'entregado') {
-      return (
-        <span className="badge badge-pending" style={styles.badge}>
-          Entregado
-        </span>
-      );
-    } else {
-      return (
-        <span className="badge badge-neutral" style={{ ...styles.badge, backgroundColor: 'rgba(176,179,181,0.15)', color: '#64748B' }}>
-          Pendiente
-        </span>
-      );
-    }
-  };
 
   if (loading) {
     return <div style={styles.loading}>Cargando tus módulos...</div>;
   }
 
   return (
-    <div style={styles.container}>
-      {/* Header and Controls */}
-      <div style={styles.headerRow}>
+    <div className="page-container" style={styles.container}>
+      {/* Header dinámico con slogan */}
+      <div className="mobile-hero-banner" style={styles.heroBanner}>
         <div>
-          <h1 style={styles.title}>Mis Módulos</h1>
+          <h1 style={styles.title}>Mis materias</h1>
+          <p style={styles.slogan}>{campusBranding.slogan}</p>
           <p style={styles.subtitle}>
             {grupoCohorte
-              ? `Grupo: ${grupoCohorte} — accede directamente a tus clases y evaluaciones`
-              : 'Progreso en tus módulos asignados'}
+              ? `Grupo: ${grupoCohorte} — consulta tus clases y evaluaciones`
+              : campusBranding.learningDescription}
           </p>
         </div>
-        <div style={styles.headerControls}>
+        <div className="mobile-header-controls" style={styles.headerControls}>
           <button 
             onClick={() => setShowMessageModal(true)} 
             style={styles.messageTeacherBtn}
@@ -475,10 +411,28 @@ export default function StudentDashboard() {
         </div>
       </div>
 
+      {/* Marco pedagógico — solo bajo demanda para no inflar RAM */}
+      {isInnovationCampus && <div style={{ marginBottom: '24px' }}>
+        {showMarco ? (
+          <div style={styles.showcaseBlock}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+              <button type="button" className="btn btn-neutral" style={{ fontSize: '12px', padding: '6px 12px' }} onClick={() => setShowMarco(false)}>
+                Ocultar marco
+              </button>
+            </div>
+            <MarcoAprendizaje />
+          </div>
+        ) : (
+          <button type="button" className="btn btn-secondary" style={{ fontSize: '13px' }} onClick={() => setShowMarco(true)}>
+            Ver marco del diplomado
+          </button>
+        )}
+      </div>}
+
       {/* KPI Cards / Statistics Grid */}
       <div className="grid-3" style={{ gap: '20px', marginBottom: '32px' }}>
         <div className="card" style={styles.kpiCard}>
-          <div style={{ ...styles.kpiIcon, backgroundColor: 'rgba(0,115,165,0.08)', color: '#0073A5' }}>
+          <div style={{ ...styles.kpiIcon, backgroundColor: 'rgba(0,115,165,0.08)', color: 'var(--accent)' }}>
             <GraduationCap size={22} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -506,7 +460,7 @@ export default function StudentDashboard() {
           </div>
           <div>
             <div style={styles.kpiValue}>{stats.tareasEntregadas}</div>
-            <div style={styles.kpiLabel}>Tareas Entregadas</div>
+            <div style={styles.kpiLabel}>Tareas entregadas</div>
           </div>
         </div>
 
@@ -515,8 +469,8 @@ export default function StudentDashboard() {
             <Award size={22} />
           </div>
           <div>
-            <div style={styles.kpiValue}>{stats.promedio} / 100</div>
-            <div style={styles.kpiLabel}>Promedio Académico</div>
+            <div style={styles.kpiValue}>{stats.promedio === null ? 'Sin calificaciones' : `${stats.promedio} / 100`}</div>
+            <div style={styles.kpiLabel}>Promedio académico</div>
           </div>
         </div>
       </div>
@@ -525,10 +479,10 @@ export default function StudentDashboard() {
       {grupoLoading ? (
         <div style={styles.inlineLoading}>Cargando información de tu grupo...</div>
       ) : !grupoCohorte && courses.length === 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '12px' }}>
+        <div className="grid-2" style={{ marginTop: '12px' }}>
           {/* Card para unirse */}
           <div className="card" style={{ padding: '24px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#0073A5', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--accent)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
               <UserPlus size={20} /> Unirse con código de acceso
             </h3>
             <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', marginBottom: '20px', marginTop: '8px' }}>
@@ -559,7 +513,7 @@ export default function StudentDashboard() {
 
           {/* Historial de solicitudes */}
           <div className="card" style={{ padding: '24px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#0073A5', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--accent)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
               <CheckCircle size={20} /> Estado de tus Solicitudes
             </h3>
             
@@ -600,9 +554,9 @@ export default function StudentDashboard() {
       ) : (
         <>
           {grupoCohorte ? (
-          <div style={styles.groupBanner}>
+          <div className="mobile-group-banner" style={styles.groupBanner}>
             <div style={styles.groupBannerIcon}>
-              <Users size={20} color="#0073A5" />
+              <Users size={20} color="var(--accent)" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={styles.groupBannerLabel}>Tu grupo / cohorte</div>
@@ -623,7 +577,7 @@ export default function StudentDashboard() {
               {!syllabusLoading && overallProgress.total > 0 && (
                 <>
                   <span style={{ opacity: 0.4 }}>·</span>
-                  <span style={{ color: overallPct === 100 ? '#10B981' : '#0073A5', fontWeight: 700 }}>
+                  <span style={{ color: overallPct === 100 ? '#10B981' : 'var(--accent)', fontWeight: 700 }}>
                     {overallPct}% completado
                   </span>
                 </>
@@ -656,12 +610,19 @@ export default function StudentDashboard() {
               Cargando materias...
             </div>
           ) : (
-            <div style={styles.modulesGrid}>
-              {materiaCards.map(({ course, pendientes, progress }) => (
+            <div className="modules-grid">
+              {materiaCards.map(({ course, pendientes, progress }) => {
+                const accent = resolveColor(course.color, isInnovationCampus ? '#08777A' : '#0073A5');
+                return (
                 <div
                   key={course.id}
                   className="card"
-                  style={{ ...styles.moduleCard, cursor: 'pointer' }}
+                  style={{
+                    ...styles.moduleCard,
+                    cursor: 'pointer',
+                    borderTop: `4px solid ${accent}`,
+                    boxShadow: `0 4px 16px ${withAlpha(accent, 0.12)}`,
+                  }}
                   onClick={() => router.push(`/estudiante/materias/${course.id}`)}
                   role="button"
                   tabIndex={0}
@@ -670,12 +631,12 @@ export default function StudentDashboard() {
                   {course.imagen ? (
                     <img src={toAssetUrl(course.imagen)} alt="" style={styles.materiaImage} />
                   ) : (
-                    <div style={styles.materiaImagePlaceholder}>
-                      <BookOpen size={28} color="#0073A5" />
+                    <div style={{ ...styles.materiaImagePlaceholder, backgroundColor: withAlpha(accent, 0.1) }}>
+                      <BookOpen size={28} color={accent} />
                     </div>
                   )}
                   <div style={{ flex: 1, minWidth: 0, padding: '16px 20px 20px' }}>
-                    <h3 style={styles.moduleCardTitle}>{course.nombre}</h3>
+                    <h3 style={{ ...styles.moduleCardTitle, color: accent }}>{course.nombre}</h3>
                     {course.descripcion && (
                       <p style={styles.moduleCardDesc}>{course.descripcion}</p>
                     )}
@@ -688,6 +649,7 @@ export default function StudentDashboard() {
                           total={progress.total}
                           compact
                           label="Progreso"
+                          accentColor={accent}
                         />
                       </div>
                     )}
@@ -698,10 +660,18 @@ export default function StudentDashboard() {
                     )}
                   </div>
                   {progress.total > 0 && (
-                    <div style={{ ...styles.modulePctBadge, position: 'absolute', top: '12px', right: '12px' }}>{progress.pct}%</div>
+                    <div style={{
+                      ...styles.modulePctBadge,
+                      position: 'absolute',
+                      top: '12px',
+                      right: '12px',
+                      color: accent,
+                      backgroundColor: withAlpha(accent, 0.1),
+                    }}>{progress.pct}%</div>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </>
@@ -713,8 +683,8 @@ export default function StudentDashboard() {
           <div style={styles.drawer} onClick={(e) => e.stopPropagation()}>
             <div style={styles.drawerHeader}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Bell size={20} color="#0073A5" />
-                <h3 style={{ fontSize: '18px', fontWeight: '800', color: '#0073A5', margin: 0 }}>Notificaciones</h3>
+                <Bell size={20} color="var(--accent)" />
+                <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--accent)', margin: 0 }}>Notificaciones</h3>
               </div>
               <button onClick={() => setShowNotifDrawer(false)} style={styles.drawerCloseBtn}>
                 <X size={20} />
@@ -742,7 +712,7 @@ export default function StudentDashboard() {
                       onClick={() => !n.leida && markNotifAsRead(n.id)}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: n.leida ? '#475569' : '#0073A5', margin: 0 }}>
+                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: n.leida ? '#475569' : 'var(--accent)', margin: 0 }}>
                           {n.titulo}
                         </h4>
                         {!n.leida && <span style={styles.unreadDot}></span>}
@@ -783,7 +753,7 @@ export default function StudentDashboard() {
                 <div style={styles.successIconWrapper}>
                   <Check size={32} />
                 </div>
-                <h3 style={{ fontSize: '20px', fontWeight: '800', color: '#0073A5', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--accent)', marginBottom: '12px' }}>
                   ¡Mensaje Enviado con Éxito!
                 </h3>
                 <p style={{ fontSize: '14px', color: '#64748B', lineHeight: '1.5', maxWidth: '360px', margin: '0 auto 20px auto' }}>
@@ -874,9 +844,30 @@ export default function StudentDashboard() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    maxWidth: '1000px',
+    maxWidth: '1200px',
     margin: '0 auto',
     paddingBottom: '40px',
+  },
+  heroBanner: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: '24px',
+    gap: '20px',
+    padding: '24px 28px',
+    backgroundColor: 'var(--navy)',
+    borderRadius: '16px',
+    color: '#fff',
+  },
+  showcaseBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '32px',
+    marginBottom: '36px',
+    padding: '28px',
+    backgroundColor: 'var(--bg-light)',
+    borderRadius: '16px',
+    border: '1px solid var(--border)',
   },
   headerRow: {
     display: 'flex',
@@ -888,12 +879,19 @@ const styles: Record<string, React.CSSProperties> = {
   title: {
     fontSize: '28px',
     fontWeight: '800',
-    color: '#0073A5',
+    color: '#fff',
     marginBottom: '6px',
+  },
+  slogan: {
+    fontSize: '15px',
+    fontWeight: 700,
+    color: 'var(--accent-bright)',
+    marginBottom: '6px',
+    fontFamily: 'var(--font-heading)',
   },
   subtitle: {
     fontSize: '14px',
-    color: '#64748B',
+    color: 'rgba(255,255,255,0.85)',
   },
   headerControls: {
     display: 'flex',
@@ -905,7 +903,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '8px',
-    backgroundColor: '#0073A5',
+    backgroundColor: 'var(--accent)',
     color: '#FFFFFF',
     border: 'none',
     borderRadius: '8px',
@@ -913,7 +911,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     fontWeight: '700',
     cursor: 'pointer',
-    boxShadow: '0 4px 10px rgba(0, 115, 165, 0.15)',
+    boxShadow: '0 4px 10px rgba(0, 168, 204, 0.2)',
     transition: 'var(--transition)',
   },
   notifBellBtn: {
@@ -1017,7 +1015,7 @@ const styles: Record<string, React.CSSProperties> = {
   groupBannerName: {
     fontSize: '16px',
     fontWeight: '800',
-    color: '#0073A5',
+    color: 'var(--accent)',
     marginTop: '2px',
   },
   groupBannerStats: {
@@ -1032,7 +1030,7 @@ const styles: Record<string, React.CSSProperties> = {
   modulePctBadge: {
     fontSize: '18px',
     fontWeight: '800',
-    color: '#0073A5',
+    color: 'var(--accent)',
     backgroundColor: 'rgba(0,115,165,0.08)',
     padding: '8px 12px',
     borderRadius: '10px',
@@ -1133,7 +1131,7 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: {
     fontSize: '12px',
     fontWeight: '700',
-    color: '#0073A5',
+    color: 'var(--accent)',
     marginBottom: '10px',
     display: 'flex',
     alignItems: 'center',
@@ -1159,7 +1157,7 @@ const styles: Record<string, React.CSSProperties> = {
   inlineLoading: {
     textAlign: 'center',
     padding: '40px 20px',
-    color: '#0073A5',
+    color: 'var(--accent)',
     fontSize: '14px',
     fontWeight: '600',
   },
@@ -1198,7 +1196,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: '400px',
     fontSize: '16px',
     fontWeight: '500',
-    color: '#0073A5',
+    color: 'var(--accent)',
   },
   
   // DRAWER STYLES
@@ -1246,7 +1244,7 @@ const styles: Record<string, React.CSSProperties> = {
   drawerActionLink: {
     background: 'none',
     border: 'none',
-    color: '#0073A5',
+    color: 'var(--accent)',
     fontSize: '11px',
     fontWeight: '700',
     cursor: 'pointer',
@@ -1280,7 +1278,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '6px',
     height: '6px',
     borderRadius: '50%',
-    backgroundColor: '#0073A5',
+    backgroundColor: 'var(--accent)',
     flexShrink: 0,
     marginTop: '5px',
   },
@@ -1320,7 +1318,7 @@ const styles: Record<string, React.CSSProperties> = {
   modalTitle: {
     fontSize: '22px',
     fontWeight: '800',
-    color: '#0073A5',
+    color: 'var(--accent)',
     marginBottom: '10px',
     borderBottom: '1px solid var(--border)',
     paddingBottom: '12px',

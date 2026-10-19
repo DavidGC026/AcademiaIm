@@ -1,0 +1,66 @@
+import { isInnovationCampus } from './campusBranding';
+import { PILARES, MAESTRO } from './innovacion-data';
+
+export const campusLanding = isInnovationCampus ? {
+  eyebrow: 'Diplomado en innovación empresarial',
+  headline: 'Las grandes ideas',
+  headlineAction: 'necesitan',
+  headlineAccent: 'un método.',
+  lead: 'Aprende a construir sistemas de innovación como las empresas que transforman el mundo.',
+  description: 'Conecta estrategia con ejecución. Explora los modelos de Apple, Amazon, Tesla y Google, y aprende a aplicarlos a tu organización.',
+  detail: 'Casos globales',
+  pathEyebrow: 'De la estrategia a la acción',
+  pathTitle: 'Una idea.',
+  pathAccent: 'Todo un sistema.',
+  paths: [
+    { title: 'Descubrimiento', description: 'Entiende a tus usuarios', icon: 'strategy' as const },
+    { title: 'Ejecución', description: 'Valida, construye y mejora', icon: 'layers' as const },
+    { title: 'Disrupción', description: 'Diseña nuevas posibilidades', icon: 'users' as const },
+  ],
+  approachTitle: 'De entender el cambio',
+  approachAction: 'a saber impulsarlo.',
+  approachDescription: 'Tres pilares que conectan las decisiones estratégicas con las herramientas para llevarlas a la práctica.',
+  pillars: PILARES,
+  instructor: MAESTRO,
+  learning: 'Aprenderás a entender las necesidades de tus usuarios, ejecutar proyectos con Lean, Agile y Stage-Gate, y combinar modelos de innovación a partir de casos de empresas líderes globales.',
+  applicationQuestion: '¿Puedo aplicarlo a mi industria?',
+  applicationAnswer: 'El programa conecta estrategia, validación y ejecución. Explorarás cómo adaptar estos enfoques a sectores como tecnología, manufactura, retail, servicios y energía.',
+  ctaTitle: 'Construye tu forma de innovar.',
+  ctaDescription: 'Los modelos son el punto de partida. Lo que hagas con ellos viene después.',
+} : {
+  eyebrow: 'Formación en cemento y concreto',
+  headline: 'El conocimiento técnico',
+  headlineAction: 'construye',
+  headlineAccent: 'mejores decisiones.',
+  lead: 'Fortalece tu práctica profesional con formación especializada en cemento, concreto y construcción.',
+  description: 'Estudia los materiales, el diseño de mezclas, el control de calidad y la durabilidad. Reúne tus clases, lecturas y evaluaciones en un mismo espacio.',
+  detail: 'Aplicación técnica',
+  pathEyebrow: 'Del material a su aplicación',
+  pathTitle: 'Cada decisión.',
+  pathAccent: 'Una base técnica.',
+  paths: [
+    { title: 'Comprende', description: 'Conoce los materiales', icon: 'strategy' as const },
+    { title: 'Aplica', description: 'Relaciona teoría y práctica', icon: 'layers' as const },
+    { title: 'Evalúa', description: 'Comprueba tu aprendizaje', icon: 'users' as const },
+  ],
+  approachTitle: 'Del fundamento técnico',
+  approachAction: 'a la práctica profesional.',
+  approachDescription: 'Un aula que conecta el estudio de los materiales con las decisiones de diseño, producción y evaluación del concreto.',
+  pillars: [
+    { id: 'conocimiento', title: 'Formación especializada', description: 'Profundiza en los conceptos del cemento y el concreto con clases y materiales organizados por materia.', icon: 'strategy' as const },
+    { id: 'acompanamiento', title: 'Aprendizaje acompañado', description: 'Consulta a tus profesores, entrega actividades y revisa tus resultados desde el aula virtual.', icon: 'users' as const },
+    { id: 'biblioteca', title: 'Biblioteca técnica', description: 'Consulta libros, revistas y recursos de apoyo disponibles según el acceso de tu cuenta.', icon: 'layers' as const },
+  ],
+  instructor: { ...MAESTRO, titulo: 'Dirección académica · IMCYC' },
+  learning: 'Consulta materias sobre cemento, tecnología del concreto, diseño de mezclas, calidad y durabilidad. El aula muestra el contenido y las actividades del programa al que estés inscrito.',
+  applicationQuestion: '¿Cómo se organiza la formación?',
+  applicationAnswer: 'Cada materia reúne sus clases, videos, lecturas, tareas y exámenes. El profesor indica las actividades y habilita las evaluaciones que correspondan.',
+  ctaTitle: 'Construye sobre conocimiento.',
+  ctaDescription: 'Consulta la formación disponible y continúa tu aprendizaje en el aula IMCYC.',
+};
+
+export const concreteAreas = [
+  { title: 'Materiales y cementantes', description: 'Estudia el cemento, los agregados, el agua y los aditivos, y su relación con las propiedades del concreto.' },
+  { title: 'Tecnología y calidad', description: 'Relaciona el diseño de mezclas, la producción y los ensayos con el control de calidad.' },
+  { title: 'Desempeño y durabilidad', description: 'Profundiza en el comportamiento del concreto, su evaluación y su conservación.' },
+];

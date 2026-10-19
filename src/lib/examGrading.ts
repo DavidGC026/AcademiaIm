@@ -29,11 +29,14 @@ export function readExamJson<T>(value: unknown, fallback: T): T {
   return (typeof value === 'string' ? JSON.parse(value) : value) as T;
 }
 
-export function attemptSnapshot(row: { calificacion: unknown; finalizado_at: Date | string; respuestas: unknown }): ExamAttemptSnapshot | null {
+export function attemptSnapshot(row: { calificacion: unknown; finalizado_at: Date | string; respuestas: unknown; iniciado_at?: Date | string; preguntas_ids?: unknown; preguntas_snapshot?: unknown }): ExamAttemptSnapshot | null {
   if (row.calificacion == null) return null;
   return {
     calificacion: Number(row.calificacion),
     fecha: row.finalizado_at instanceof Date ? row.finalizado_at.toISOString() : row.finalizado_at,
     respuestas: readExamJson<Record<number, number> | null>(row.respuestas, null),
+    ...(row.iniciado_at ? { iniciado_at: new Date(row.iniciado_at).toISOString() } : {}),
+    ...(row.preguntas_ids != null ? { preguntas_ids: readExamJson<number[] | null>(row.preguntas_ids, null) } : {}),
+    ...(row.preguntas_snapshot != null ? { preguntas: readExamJson<ExamQuestion[] | null>(row.preguntas_snapshot, null) } : {}),
   };
 }

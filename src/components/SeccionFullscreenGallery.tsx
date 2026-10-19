@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import { BookOpen, Download, ExternalLink, FileText, Link2, Video, X } from 'lucide-react';
@@ -8,6 +8,7 @@ import VideoEmbed from '@/components/VideoEmbed';
 import { getFileExt } from '@/components/FileResourcePreview';
 import { toAbsoluteAssetUrl, toBibliotecaContenidoUrl } from '@/lib/assetUrl';
 import { withAlpha } from '@/lib/colorUtils';
+import { useModalFocus } from '@/lib/useModalFocus';
 import type { SeccionItemEnriquecido } from '@/components/ClaseSeccionesViewer';
 
 const SecurePdfViewer = dynamic(() => import('@/components/SecurePdfViewer'), { ssr: false });
@@ -30,6 +31,7 @@ interface ResolvedItem {
   linkUrl?: string;
   downloadUrl?: string;
   downloadName?: string;
+  portadaUrl?: string;
 }
 
 function resolveItem(item: SeccionItemEnriquecido, idx: number, accesoPrioritario: boolean): ResolvedItem {
@@ -75,6 +77,7 @@ function resolveItem(item: SeccionItemEnriquecido, idx: number, accesoPrioritari
     linkUrl: isPdf ? undefined : absUrl,
     downloadUrl: absUrl,
     downloadName: fileName,
+    portadaUrl: item.portada ? toAbsoluteAssetUrl(item.portada) : undefined,
   };
 }
 
@@ -87,21 +90,27 @@ export default function SeccionFullscreenGallery({
   onClose,
 }: Props) {
   const [active, setActive] = useState(0);
-  const [viewerH, setViewerH] = useState(() => typeof window === 'undefined' ? 640 : Math.max(280, window.innerHeight - 140));
+  const [viewerH, setViewerH] = useState(640);
+  const [failedCovers, setFailedCovers] = useState<Set<string>>(new Set());
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && dialogRef.current?.contains(document.activeElement)) onClose();
     };
-    const update = () => setViewerH(Math.max(280, window.innerHeight - 140));
+    const update = () => setViewerH(Math.max(280, (window.visualViewport?.height || window.innerHeight) - 140));
+    update();
+    window.visualViewport?.addEventListener('resize', update);
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', update);
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('resize', update);
     };
   }, [onClose]);
 
@@ -119,14 +128,14 @@ export default function SeccionFullscreenGallery({
   };
 
   return createPortal(
-    <div className="seccion-gallery" role="dialog" aria-modal="true" aria-label={`${title} en pantalla completa`}>
-      <div style={{ ...header, borderBottom: `3px solid ${color}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
-          <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
+    <div ref={dialogRef} tabIndex={-1} className="seccion-gallery" role="dialog" aria-modal="true" aria-label={`${title} en pantalla completa`}>
+      <div className={`seccion-gallery-header${canDownload ? ' has-download' : ''}`} style={{ ...header, borderBottom: `3px solid ${color}` }}>
+        <div className="seccion-gallery-heading" style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+          <span className="seccion-gallery-color" style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {title}
           </h2>
-          <span style={{ fontSize: '13px', color: '#64748B', flexShrink: 0 }}>
+          <span className="seccion-gallery-count" style={{ fontSize: '13px', color: '#64748B', flexShrink: 0 }}>
             {items.length} recurso{items.length !== 1 ? 's' : ''}
           </span>
         </div>
@@ -136,17 +145,18 @@ export default function SeccionFullscreenGallery({
       </div>
 
       {canDownload && (
-        <div style={downloadBar}>
+        <div className="seccion-gallery-download" style={downloadBar}>
           <a
             href={current!.downloadUrl}
             download={current!.downloadName}
+            aria-label={`Descargar ${current!.downloadName || current!.label}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-secondary"
             style={{ fontSize: '13px', padding: '8px 14px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
           >
             <Download size={16} />
-            Descargar archivo
+            <span className="seccion-gallery-download-label">Descargar archivo</span>
           </a>
         </div>
       )}
@@ -169,8 +179,17 @@ export default function SeccionFullscreenGallery({
                   }}
                 >
                   <div className="seccion-gallery-thumb-preview" style={{ ...thumbPreview, borderColor: withAlpha(color, 0.25), color }}>
-                    {iconFor(r.icon)}
-                    <span style={thumbNum}>{i + 1}</span>
+                    {r.portadaUrl && !failedCovers.has(r.key) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={r.portadaUrl}
+                        alt={`Portada de ${r.label}`}
+                        style={thumbCover}
+                        loading="lazy"
+                        onError={() => setFailedCovers((previous) => new Set(previous).add(r.key))}
+                      />
+                    ) : iconFor(r.icon)}
+                    <span style={r.portadaUrl && !failedCovers.has(r.key) ? thumbNumOnCover : thumbNum}>{i + 1}</span>
                   </div>
                   <span style={{ ...thumbLabel, color: isActive ? color : '#334155' }}>{r.label}</span>
                 </button>
@@ -179,7 +198,7 @@ export default function SeccionFullscreenGallery({
           </aside>
         )}
 
-        <main className="seccion-gallery-main">
+        <div className="seccion-gallery-main">
           {current?.videoUrl ? (
             <div style={{ position: 'relative', width: '100%', height: viewerH, background: '#000' }}>
               <VideoEmbed key={current.key} url={current.videoUrl} title={current.label} allowDownload={permiteDescarga} />
@@ -208,7 +227,7 @@ export default function SeccionFullscreenGallery({
               </p>
             </div>
           )}
-        </main>
+        </div>
       </div>
     </div>,
     document.body
@@ -270,6 +289,10 @@ const thumbPreview: React.CSSProperties = {
   justifyContent: 'center',
 };
 
+const thumbCover: React.CSSProperties = {
+  width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', display: 'block', borderRadius: '6px',
+};
+
 const thumbNum: React.CSSProperties = {
   position: 'absolute',
   top: '6px',
@@ -277,6 +300,10 @@ const thumbNum: React.CSSProperties = {
   fontSize: '11px',
   fontWeight: 800,
   color: '#94A3B8',
+};
+
+const thumbNumOnCover: React.CSSProperties = {
+  ...thumbNum, color: '#334155', background: 'rgba(255,255,255,0.85)', borderRadius: '4px', padding: '1px 5px', lineHeight: 1.4,
 };
 
 const thumbLabel: React.CSSProperties = {

@@ -35,13 +35,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       'SELECT id, calificacion, historial FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ? FOR UPDATE', [id, alumno_id]
     );
     const attempt = rows[0];
-    if (!attempt || attempt.calificacion == null || readExamJson<ExamAttemptSnapshot[]>(attempt.historial, []).length + 1 !== numero_intento) {
+    if (!attempt || readExamJson<ExamAttemptSnapshot[]>(attempt.historial, []).length + 1 !== numero_intento) {
       await connection.rollback();
       transactionStarted = false;
-      return NextResponse.json({ error: 'El intento cambió o el alumno todavía no ha entregado el examen. Actualiza los resultados.' }, { status: 409 });
+      return NextResponse.json({ error: 'El intento cambió o el alumno todavía no ha abierto el examen. Actualiza los resultados.' }, { status: 409 });
     }
     // La fecha de entrega tiene ON UPDATE; conservarla al habilitar otro intento.
-    await connection.execute('UPDATE intentos_examenes SET permite_reintento = 1, finalizado_at = finalizado_at WHERE id = ?', [attempt.id]);
+    if (attempt.calificacion == null) {
+      // El docente puede reiniciar una apertura vencida sin fabricar una calificación.
+      await connection.execute('UPDATE intentos_examenes SET permite_reintento = 0, intento_en_curso = NULL, preguntas_ids = NULL, preguntas_snapshot = NULL, iniciado_at = CURRENT_TIMESTAMP, finalizado_at = finalizado_at WHERE id = ?', [attempt.id]);
+    } else {
+      await connection.execute('UPDATE intentos_examenes SET permite_reintento = 1, intento_en_curso = NULL, finalizado_at = finalizado_at WHERE id = ?', [attempt.id]);
+    }
     await connection.commit();
     transactionStarted = false;
     return NextResponse.json({ success: true, ...await getExamAvailability(exam, alumno_id), message: 'Nuevo intento autorizado. La calificación anterior se conservará en el historial.' });

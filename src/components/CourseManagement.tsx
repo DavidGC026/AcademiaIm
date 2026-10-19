@@ -4,6 +4,7 @@ import { useState, useEffect, useEffectEvent, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { coursePath, parseCourseRoute } from '@/lib/courseRoutes';
+import { parseCssColor, toColorPickerValue } from '@/lib/colorUtils';
 import { 
   Plus, 
   BookOpen, 
@@ -14,6 +15,8 @@ import {
   AlertCircle,
   Trash2,
   Pencil,
+  Eye,
+  EyeOff,
   Users,
   Check,
   Copy,
@@ -23,11 +26,10 @@ import {
   Settings2,
   X
 } from 'lucide-react';
-import FileResourcePreview from '@/components/FileResourcePreview';
 import BiografiasPanel from '@/components/BiografiasPanel';
-import ClaseSeccionesEditor from '@/components/ClaseSeccionesEditor';
-import { type ClaseSeccion, defaultSecciones, resolveSecciones, serializeSecciones } from '@/lib/claseSecciones';
-import { toAssetUrl, toClasePresentacionUrl } from '@/lib/assetUrl';
+import ClassComposer from '@/components/ClassComposer';
+import { type ClaseSeccion, resolveSecciones } from '@/lib/claseSecciones';
+import { toAssetUrl } from '@/lib/assetUrl';
 
 interface Course {
   id: number;
@@ -35,7 +37,9 @@ interface Course {
   descripcion: string;
   codigo?: string;
   imagen?: string | null;
-  estado: 'pendiente' | 'aprobado' | 'rechazado';
+  color?: string | null;
+  color_lecturas?: string | null;
+  estado: 'pendiente' | 'aprobado' | 'rechazado' | 'oculto';
   created_at: string;
   grupos_asignados?: number;
   creador_nombre?: string;
@@ -49,7 +53,8 @@ const courseSections = [
   { id: 'biografias', label: 'Biografías', icon: UserPlus },
 ] as const;
 
-const courseStatusLabels = { aprobado: 'Aprobado', pendiente: 'En revisión', rechazado: 'Rechazado' };
+const courseStatusLabels = { aprobado: 'Publicada', pendiente: 'En revisión', rechazado: 'Rechazada', oculto: 'Oculta para alumnos' };
+const canEditCourseContent = (course: Course) => course.estado === 'aprobado' || course.estado === 'oculto';
 
 const normalizeSearch = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim();
 
@@ -99,7 +104,7 @@ interface ClassItem {
   orden?: number;
 }
 
-export default function CourseManagement({ role }: { role: 'maestro' | 'administrador' }) {
+export default function CourseManagement({ role, userId }: { role: 'maestro' | 'administrador'; userId: number }) {
   const router = useRouter();
   const pathname = usePathname();
   const isAdmin = role === 'administrador';
@@ -123,8 +128,6 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
   const selectedCourseId = useRef<number | null>(null);
-  const [classFormDirty, setClassFormDirty] = useState(false);
-  const [classError, setClassError] = useState('');
 
   // Selecciones
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
@@ -137,29 +140,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [editCourseImagen, setEditCourseImagen] = useState('');
   const [editCourseNombre, setEditCourseNombre] = useState('');
   const [editCourseDesc, setEditCourseDesc] = useState('');
+  const [editCourseColor, setEditCourseColor] = useState('');
+  const [editCourseReadingColor, setEditCourseReadingColor] = useState('');
   const [courseDetailsSaving, setCourseDetailsSaving] = useState(false);
+  const [courseActionBusy, setCourseActionBusy] = useState(false);
+  const [courseActionError, setCourseActionError] = useState('');
   const [courseEditMsg, setCourseEditMsg] = useState('');
   const [courseLoading, setCourseLoading] = useState(false);
 
-  // Form Clases
-  const [newClassTitle, setNewClassTitle] = useState('');
-  const [newClassDesc, setNewClassDesc] = useState('');
-  const [classVideos, setClassVideos] = useState<ClaseVideo[]>([]);
-  const [videoTituloInput, setVideoTituloInput] = useState('');
-  const [videoUrlInput, setVideoUrlInput] = useState('');
-  const [presentacionUrl, setPresentacionUrl] = useState('');
-  const [presentacionNombre, setPresentacionNombre] = useState('');
-  const [presentacionLocalFile, setPresentacionLocalFile] = useState<File | null>(null);
-  const [presentacionUploading, setPresentacionUploading] = useState(false);
-  const [contenidoCentral, setContenidoCentral] = useState<'video' | 'presentacion'>('video');
-  const [requiereTarea, setRequiereTarea] = useState(false);
-  const [tareaDescripcion, setTareaDescripcion] = useState('');
-  const [tareaRecursos, setTareaRecursos] = useState<{ archivo_url: string; archivo_nombre: string; titulo?: string }[]>([]);
-  const [tareaRecursoUploading, setTareaRecursoUploading] = useState(false);
   const [bibliotecaLibros, setBibliotecaLibros] = useState<{ id: number; titulo: string; autor: string }[]>([]);
-  const [classSecciones, setClassSecciones] = useState<ClaseSeccion[]>(defaultSecciones());
-  const [seccionesUploading, setSeccionesUploading] = useState(false);
-  const [classLoading, setClassLoading] = useState(false);
   // Exámenes
   const [exams, setExams] = useState<{ id: number; titulo: string; descripcion: string; limite_tiempo: number; modo_liberacion: string; clase_requisito_titulo: string | null }[]>([]);
   const [examLoading, setExamLoading] = useState(false);
@@ -169,6 +158,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const [newExamTitle, setNewExamTitle] = useState('');
   const [newExamDesc, setNewExamDesc] = useState('');
   const [newExamTime, setNewExamTime] = useState(0);
+  const [newExamQuestionCount, setNewExamQuestionCount] = useState(0);
   // Copia del examen cargado para detectar cambios sin guardar al editar
   const [examSnapshot, setExamSnapshot] = useState('');
   const [examFetching, setExamFetching] = useState(false);
@@ -318,13 +308,17 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       setCourseEditMsg('El nombre es obligatorio');
       return;
     }
+    if ([editCourseColor, editCourseReadingColor].some(color => color.trim() && !parseCssColor(color))) {
+      setCourseEditMsg('Usa un color hexadecimal (#0073A5) o RGB válido.');
+      return;
+    }
     setCourseEditMsg('');
     setCourseDetailsSaving(true);
     try {
       const res = await fetch(`/api/cursos/${selectedCourse.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre, descripcion: editCourseDesc.trim(), imagen: editCourseImagen.trim() || null }),
+        body: JSON.stringify({ nombre, descripcion: editCourseDesc.trim(), imagen: editCourseImagen.trim() || null, color: editCourseColor.trim() || null, color_lecturas: editCourseReadingColor.trim() || null }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -333,11 +327,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
           nombre: data.curso?.nombre ?? nombre,
           descripcion: data.curso?.descripcion ?? editCourseDesc.trim(),
           imagen: data.curso?.imagen ?? null,
+          color: data.curso?.color ?? (editCourseColor.trim() || null),
+          color_lecturas: data.curso?.color_lecturas ?? (editCourseReadingColor.trim() || null),
         };
         setSelectedCourse(updated);
         setEditCourseNombre(updated.nombre);
         setEditCourseDesc(updated.descripcion);
         setEditCourseImagen(updated.imagen || '');
+        setEditCourseColor(updated.color || '');
+        setEditCourseReadingColor(updated.color_lecturas || '');
         setCourseEditMsg('Materia actualizada correctamente');
         fetchCourses();
       } else {
@@ -348,188 +346,6 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       setCourseEditMsg('Error de conexión');
     } finally {
       setCourseDetailsSaving(false);
-    }
-  };
-
-  const addVideoToList = () => {
-    if (!videoUrlInput.trim()) return;
-    setClassVideos([
-      ...classVideos,
-      { titulo: videoTituloInput.trim(), url: videoUrlInput.trim() },
-    ]);
-    setVideoTituloInput('');
-    setVideoUrlInput('');
-  };
-
-  const removeVideoFromList = (idx: number) => {
-    setClassVideos(classVideos.filter((_, i) => i !== idx));
-  };
-
-  const resetClassForm = () => {
-    setClassFormDirty(false);
-    setClassError('');
-    setNewClassTitle('');
-    setNewClassDesc('');
-    setClassVideos([]);
-    setVideoTituloInput('');
-    setVideoUrlInput('');
-    setRequiereTarea(false);
-    setTareaDescripcion('');
-    setTareaRecursos([]);
-    setClassSecciones(defaultSecciones());
-    setPresentacionUrl('');
-    setPresentacionNombre('');
-    setPresentacionLocalFile(null);
-    setContenidoCentral('video');
-  };
-
-  const startEditClass = (c: ClassItem) => {
-    setClassFormDirty(false);
-    setClassError('');
-    const videoList: ClaseVideo[] =
-      c.videos && c.videos.length > 0
-        ? c.videos
-        : c.video_url
-        ? [{ titulo: '', url: c.video_url }]
-        : [];
-    setNewClassTitle(c.titulo);
-    setNewClassDesc(c.descripcion || '');
-    setClassVideos([...videoList]);
-    setRequiereTarea(!!c.requiere_tarea);
-    setTareaDescripcion(c.tarea_descripcion || '');
-    setTareaRecursos(Array.isArray(c.tarea_recursos) ? [...c.tarea_recursos] : []);
-    setClassSecciones(
-      c.secciones && c.secciones.length > 0
-        ? c.secciones.map((s) => ({ ...s, items: [...s.items] }))
-        : resolveSecciones(null, c.materiales, c.referencias)
-    );
-    setPresentacionUrl(c.presentacion_url || '');
-    setPresentacionNombre(c.presentacion_nombre || '');
-    setPresentacionLocalFile(null);
-    setContenidoCentral(
-      videoList.length > 0 ? 'video' : c.presentacion_url ? 'presentacion' : 'video'
-    );
-    setVideoTituloInput('');
-    setVideoUrlInput('');
-  };
-
-  const handleTareaRecursoUpload = async (file: File) => {
-    setTareaRecursoUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (res.ok && data.url) {
-        setTareaRecursos((prev) => [
-          ...prev,
-          { archivo_url: data.url, archivo_nombre: data.name || file.name },
-        ]);
-      } else {
-        alert(data.error || 'Error al subir el recurso');
-      }
-    } catch {
-      alert('Error de conexión al subir el recurso');
-    } finally {
-      setTareaRecursoUploading(false);
-    }
-  };
-
-  const removeTareaRecurso = (idx: number) => {
-    setTareaRecursos((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  const handlePresentacionUpload = async (file: File) => {
-    setPresentacionUploading(true);
-    setPresentacionLocalFile(file);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/clases/presentacion', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al subir');
-      setPresentacionUrl(data.ref);
-      setPresentacionNombre(data.name || file.name);
-    } catch (error) {
-      setPresentacionLocalFile(null);
-      alert(error instanceof Error ? error.message : 'Error al subir presentación');
-    } finally {
-      setPresentacionUploading(false);
-    }
-  };
-
-  const clearPresentacion = () => {
-    setPresentacionUrl('');
-    setPresentacionNombre('');
-    setPresentacionLocalFile(null);
-  };
-
-  const handleSaveClass = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newClassTitle.trim() || !selectedCourse || seccionesUploading) return;
-    setClassError('');
-    // Incluir un video pendiente en los inputs aunque no se haya pulsado "Agregar".
-    const videosToSend = contenidoCentral === 'video' ? [...classVideos] : [];
-    if (contenidoCentral === 'video' && videoUrlInput.trim()) {
-      videosToSend.push({ titulo: videoTituloInput.trim(), url: videoUrlInput.trim() });
-    }
-    if (contenidoCentral === 'presentacion' && !presentacionUrl) {
-      setClassError('Sube una presentación (PDF, PPT o PPTX) o elige la opción Video.');
-      return;
-    }
-    setClassLoading(true);
-    try {
-      const existing = editingClassId ? classes.find((c) => c.id === editingClassId) : null;
-      const res = await fetch('/api/clases', {
-        method: editingClassId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          editingClassId
-            ? {
-                id: editingClassId,
-                titulo: newClassTitle,
-                descripcion: newClassDesc,
-                videos: videosToSend,
-                contenido_central: contenidoCentral,
-                presentacion_url: contenidoCentral === 'presentacion' ? presentacionUrl || null : null,
-                presentacion_nombre: contenidoCentral === 'presentacion' ? presentacionNombre || null : null,
-                secciones: serializeSecciones(classSecciones),
-                requiere_tarea: requiereTarea,
-                tarea_descripcion: tareaDescripcion,
-                tarea_recursos: tareaRecursos,
-                orden: existing?.orden ?? 0,
-              }
-            : {
-                curso_id: selectedCourse.id,
-                titulo: newClassTitle,
-                descripcion: newClassDesc,
-                videos: videosToSend,
-                contenido_central: contenidoCentral,
-                presentacion_url: contenidoCentral === 'presentacion' ? presentacionUrl || null : null,
-                presentacion_nombre: contenidoCentral === 'presentacion' ? presentacionNombre || null : null,
-                secciones: serializeSecciones(classSecciones),
-                requiere_tarea: requiereTarea,
-                tarea_descripcion: tareaDescripcion,
-                tarea_recursos: tareaRecursos,
-                orden: classes.length + 1,
-              }
-        ),
-      });
-
-      if (!res.ok) {
-        const result = await res.json();
-        throw new Error(result.error || 'No se pudo guardar la clase.');
-      }
-      if (res.ok) {
-        setNotice(editingClassId ? 'Cambios de la clase guardados.' : 'Clase creada correctamente.');
-        resetClassForm();
-        router.replace(coursePath(basePath, selectedCourse.id, 'clases'));
-        fetchClasses(selectedCourse.id);
-      }
-    } catch (error) {
-      setClassError(error instanceof Error ? error.message : 'No se pudo guardar la clase. Revisa tu conexión.');
-    } finally {
-      setClassLoading(false);
     }
   };
 
@@ -623,6 +439,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
           titulo: newExamTitle,
           descripcion: newExamDesc,
           limite_tiempo: newExamTime,
+          preguntas_mostrar: newExamQuestionCount,
           preguntas: questions
         })
       });
@@ -632,6 +449,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
         setNewExamTitle('');
         setNewExamDesc('');
         setNewExamTime(0);
+        setNewExamQuestionCount(0);
         setQuestions([]);
         setExamSnapshot('');
         router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${editingExamId ?? data.examenId}`);
@@ -680,8 +498,9 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       setNewExamTitle(data.exam.titulo || '');
       setNewExamDesc(data.exam.descripcion || '');
       setNewExamTime(Number(data.exam.limite_tiempo) || 0);
+      setNewExamQuestionCount(Number(data.exam.preguntas_mostrar) || 0);
       setQuestions(loaded);
-      setExamSnapshot(JSON.stringify([data.exam.titulo || '', data.exam.descripcion || '', Number(data.exam.limite_tiempo) || 0, loaded]));
+      setExamSnapshot(JSON.stringify([data.exam.titulo || '', data.exam.descripcion || '', Number(data.exam.limite_tiempo) || 0, Number(data.exam.preguntas_mostrar) || 0, loaded]));
     } catch (err) {
       console.error(err);
       alert('No se pudo cargar el examen para editarlo.');
@@ -702,6 +521,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       formData.append('titulo', newExamTitle);
       formData.append('descripcion', newExamDesc);
       formData.append('limite_tiempo', String(newExamTime));
+      formData.append('preguntas_mostrar', String(newExamQuestionCount));
 
       const res = await fetch('/api/examenes/importar', {
         method: 'POST',
@@ -714,6 +534,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
         setNewExamTitle('');
         setNewExamDesc('');
         setNewExamTime(0);
+        setNewExamQuestionCount(0);
         setImportFile(null);
         router.replace(`/${isAdmin ? 'admin' : 'maestro'}/examenes/${data.examenId}`);
         fetchExams(selectedCourse.id);
@@ -876,10 +697,11 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
     editorInitialized.current = null;
     setSelectedCourse(course);
     setWorkspaceError('');
-    resetClassForm();
+    setCourseActionError('');
     setNewExamTitle('');
     setNewExamDesc('');
     setNewExamTime(0);
+    setNewExamQuestionCount(0);
     setQuestions([]);
     setImportFile(null);
     setCopiedCode(false);
@@ -896,9 +718,11 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
     setEditCourseImagen(course.imagen || '');
     setEditCourseNombre(course.nombre);
     setEditCourseDesc(course.descripcion || '');
+    setEditCourseColor(course.color || '');
+    setEditCourseReadingColor(course.color_lecturas || '');
     setCourseEditMsg('');
-    setWorkspaceLoading(course.estado === 'aprobado');
-    if (course.estado === 'aprobado') {
+    setWorkspaceLoading(canEditCourseContent(course));
+    if (canEditCourseContent(course)) {
       await Promise.all([
         fetchClasses(course.id),
         fetchExams(course.id),
@@ -909,25 +733,71 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
     }
   };
 
+  const setCourseVisibility = async () => {
+    if (!selectedCourse || !canEditCourseContent(selectedCourse) || courseActionBusy || !confirmLeave()) return;
+    const estado = selectedCourse.estado === 'aprobado' ? 'oculto' : 'aprobado';
+    const confirmed = window.confirm(estado === 'oculto'
+      ? `¿Ocultar «${selectedCourse.nombre}»? Los alumnos dejarán de verla. Se conservan las clases, inscripciones y calificaciones, y puedes seguir editándola.`
+      : `¿Mostrar «${selectedCourse.nombre}»? Los alumnos inscritos volverán a tener acceso a su contenido.`);
+    if (!confirmed) return;
+    setCourseActionBusy(true);
+    setCourseActionError('');
+    try {
+      const response = await fetch(`/api/cursos/${selectedCourse.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No se pudo cambiar la visibilidad.');
+      const updated = { ...selectedCourse, ...result.curso } as Course;
+      setSelectedCourse(updated);
+      setEditCourseNombre(updated.nombre);
+      setEditCourseDesc(updated.descripcion || '');
+      setEditCourseImagen(updated.imagen || '');
+      setEditCourseColor(updated.color || '');
+      setEditCourseReadingColor(updated.color_lecturas || '');
+      setCourses(current => current.map(course => course.id === updated.id ? updated : course));
+      setNotice(estado === 'oculto' ? 'Materia oculta para los alumnos. Puedes seguir editando el contenido.' : 'Materia publicada para los alumnos inscritos.');
+    } catch (error) { setCourseActionError(error instanceof Error ? error.message : 'No se pudo cambiar la visibilidad.'); }
+    finally { setCourseActionBusy(false); }
+  };
+
+  const deleteCourse = async () => {
+    if (!isAdmin || !selectedCourse || courseActionBusy || !confirmLeave()) return;
+    if (!window.confirm(`¿Eliminar permanentemente «${selectedCourse.nombre}»? Se borrarán sus clases, exámenes, entregas, calificaciones, foros e inscripciones. Esta acción no se puede deshacer. Para conservarlos, usa Ocultar de alumnos.`)) return;
+    setCourseActionBusy(true);
+    setCourseActionError('');
+    try {
+      const response = await fetch(`/api/cursos/${selectedCourse.id}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No se pudo eliminar la materia.');
+      const deletedId = selectedCourse.id;
+      selectedCourseId.current = null;
+      setSelectedCourse(null);
+      setCourses(current => current.filter(course => course.id !== deletedId));
+      setNotice('Materia eliminada permanentemente.');
+      router.replace(basePath);
+    } catch (error) { setCourseActionError(error instanceof Error ? error.message : 'No se pudo eliminar la materia.'); }
+    finally { setCourseActionBusy(false); }
+  };
+
   const hasGroupChanges = gruposCurso.some(grupo => (Number(grupo.asignado) === 1) !== selectedGrupoIds.includes(grupo.id));
   const hasUnsavedChanges = (showCourseForm && !!(newCourseName || newCourseDesc || newCourseImagen)) || (!!selectedCourse && (
-    classFormDirty ||
-    (editingExamId ? !examFetching && !!examSnapshot && JSON.stringify([newExamTitle, newExamDesc, newExamTime, questions]) !== examSnapshot :
-      (showExamBuilder || showExcelImporter) && !!(newExamTitle || newExamDesc || importFile || questions.some(q => q.pregunta || q.opciones.some(o => o.texto)))) ||
+    (editingExamId ? !examFetching && !!examSnapshot && JSON.stringify([newExamTitle, newExamDesc, newExamTime, newExamQuestionCount, questions]) !== examSnapshot :
+      (showExamBuilder || showExcelImporter) && !!(newExamTitle || newExamDesc || newExamTime || newExamQuestionCount || importFile || questions.some(q => q.pregunta || q.opciones.some(o => o.texto)))) ||
     editCourseNombre !== selectedCourse.nombre ||
     editCourseDesc !== (selectedCourse.descripcion || '') ||
     editCourseImagen !== (selectedCourse.imagen || '') ||
+    editCourseColor !== (selectedCourse.color || '') ||
+    editCourseReadingColor !== (selectedCourse.color_lecturas || '') ||
     hasGroupChanges
   ));
-  const workspaceBusy = courseLoading || courseDetailsSaving || classLoading || examLoading || examFetching || importLoading || gruposSaveLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading;
+  const workspaceBusy = courseActionBusy || courseLoading || courseDetailsSaving || examLoading || examFetching || importLoading || gruposSaveLoading;
   const confirmLeave = () => !hasUnsavedChanges || confirm('Tienes cambios sin guardar en esta materia. ¿Quieres descartarlos y continuar?');
 
   useEffect(() => {
-    if (!hasUnsavedChanges && !seccionesUploading) return;
+    if (!hasUnsavedChanges) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
-  }, [hasUnsavedChanges, seccionesUploading]);
+  }, [hasUnsavedChanges]);
 
   // La URL controla la vista; el layout conserva los borradores al usar Atrás/Adelante.
   const syncCourseFromRoute = useEffectEvent(() => {
@@ -937,7 +807,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       selectedCourseId.current = null;
       setSelectedCourse(null);
     } else {
-      if (course.estado !== 'aprobado' && route.section !== 'datos') router.replace(coursePath(basePath, course.id, 'datos'));
+      if (!canEditCourseContent(course) && route.section !== 'datos') router.replace(coursePath(basePath, course.id, 'datos'));
       if (selectedCourseId.current !== course.id) void selectCourse(course);
     }
   });
@@ -948,13 +818,8 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
   const syncEditorFromRoute = useEffectEvent(() => {
     if (!route.editor || !selectedCourse || selectedCourse.id !== route.courseId || workspaceLoading || editorInitialized.current === pathname) return;
     if (route.editor === 'class') {
-      if (route.classId) {
-        const cls = classes.find(item => item.id === route.classId);
-        if (!cls) return;
-        startEditClass(cls);
-      } else {
-        resetClassForm();
-      }
+      editorInitialized.current = pathname;
+      return;
     } else if (route.editor === 'exam' && route.examId) {
       setImportFile(null);
       setQuestions([]);
@@ -964,6 +829,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       setNewExamTitle('');
       setNewExamDesc('');
       setNewExamTime(0);
+      setNewExamQuestionCount(0);
       setImportFile(null);
       setQuestions(route.editor === 'exam' ? [{ pregunta: '', tipo: 'opcion_multiple', opciones: Array.from({ length: 4 }, () => ({ texto: '', es_correcta: false })) }] : []);
     }
@@ -1005,6 +871,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
         </div>}
       </div>
 
+      {courseActionError && <div role="alert" className="teacher-alert teacher-alert--error"><AlertCircle size={18} /><span>{courseActionError}</span></div>}
       {notice && <div className="teacher-alert" role="status"><Check size={18} /><span>{notice}</span><button type="button" aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={18} /></button></div>}
 
       {!selectedCourse || showCourseForm ? <>
@@ -1081,15 +948,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
             <span className="teacher-result-count" role="status">{filteredCourses.length} de {courses.length} materias</span>
           </div>
           <div className="teacher-filters" role="group" aria-label="Filtrar materias por estado">
-            {(['todos', 'aprobado', 'pendiente', 'rechazado'] as const).map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)}>{status === 'todos' ? 'Todos' : status === 'aprobado' ? 'Aprobados' : status === 'pendiente' ? 'En revisión' : 'Rechazados'}<span>{status === 'todos' ? courses.length : courses.filter(course => course.estado === status).length}</span></button>)}
+            {(['todos', 'aprobado', 'oculto', 'pendiente', 'rechazado'] as const).map(status => <button key={status} type="button" aria-pressed={statusFilter === status} onClick={() => setStatusFilter(status)}>{status === 'todos' ? 'Todos' : status === 'aprobado' ? 'Publicadas' : status === 'oculto' ? 'Ocultas' : status === 'pendiente' ? 'En revisión' : 'Rechazadas'}<span>{status === 'todos' ? courses.length : courses.filter(course => course.estado === status).length}</span></button>)}
           </div>
           {coursesError ? <div className="teacher-empty" role="alert"><AlertCircle size={28} /><h2>No pudimos cargar las materias</h2><p>{coursesError}</p><button type="button" className="btn btn-secondary" onClick={() => { setLoading(true); fetchCourses(); }}>Reintentar</button></div> : filteredCourses.length === 0 ? <div className="teacher-empty"><BookOpen size={32} /><h2>{courses.length ? 'No hay materias con estos filtros' : 'Tu primera materia empieza aquí'}</h2><p>{courses.length ? 'Prueba con otro nombre o cambia el estado.' : 'Envía una propuesta para comenzar a preparar tus clases.'}</p>{courses.length > 0 && <button type="button" className="btn btn-secondary" onClick={() => { setCourseSearch(''); setStatusFilter('todos'); }}>Limpiar filtros</button>}</div> : <ul className="teacher-course-list">
             {filteredCourses.map(course => <li key={course.id}>
-              <Link className="teacher-course-row" href={coursePath(basePath, course.id, course.estado === 'aprobado' ? 'clases' : 'datos')}>
+              <Link className="teacher-course-row" href={coursePath(basePath, course.id, canEditCourseContent(course) ? 'clases' : 'datos')}>
                 <span className="teacher-course-cover">{course.imagen ? <img src={toAssetUrl(course.imagen)} alt="" /> : <BookOpen size={24} />}</span>
-                <span className="teacher-course-info"><span className="teacher-course-name">{course.nombre}</span><span className="teacher-course-description">{course.descripcion || 'Sin descripción.'}</span><span className="teacher-course-meta">{course.codigo && <span>{course.codigo}</span>}{isAdmin && course.creador_nombre && <span>{course.creador_nombre}</span>}{course.estado === 'aprobado' && course.grupos_asignados !== undefined && <span><Users size={14} />{course.grupos_asignados || 0} {(course.grupos_asignados || 0) === 1 ? 'grupo asignado' : 'grupos asignados'}</span>}</span></span>
+                <span className="teacher-course-info"><span className="teacher-course-name">{course.nombre}</span><span className="teacher-course-description">{course.descripcion || 'Sin descripción.'}</span><span className="teacher-course-meta">{course.codigo && <span>{course.codigo}</span>}{isAdmin && course.creador_nombre && <span>{course.creador_nombre}</span>}{canEditCourseContent(course) && course.grupos_asignados !== undefined && <span><Users size={14} />{course.grupos_asignados || 0} {(course.grupos_asignados || 0) === 1 ? 'grupo asignado' : 'grupos asignados'}</span>}</span></span>
                 <span className={`teacher-status teacher-status--${course.estado}`}>{courseStatusLabels[course.estado]}</span>
-                <span className="teacher-course-open">{course.estado === 'aprobado' ? 'Abrir materia' : 'Ver y editar'}<ChevronRight size={18} /></span>
+                <span className="teacher-course-open">{canEditCourseContent(course) ? 'Abrir materia' : 'Ver y editar'}<ChevronRight size={18} /></span>
               </Link>
             </li>)}
           </ul>}
@@ -1097,13 +964,15 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
       </> : <>
         <div className="teacher-workspace-toolbar">
           <Link className="btn btn-neutral" href={basePath} onClick={guardNavigation}><ArrowLeft size={17} /> Todas las materias</Link>
-          <label className="teacher-course-switch">Cambiar materia<select className="form-input" value={selectedCourse.id} disabled={workspaceBusy} onChange={(event) => { const course = courses.find(item => item.id === Number(event.target.value)); if (course && confirmLeave()) router.push(coursePath(basePath, course.id, course.estado === 'aprobado' ? 'clases' : 'datos')); }}>{courses.map(course => <option key={course.id} value={course.id}>{course.nombre}</option>)}</select></label>
+          <label className="teacher-course-switch">Cambiar materia<select className="form-input" value={selectedCourse.id} disabled={workspaceBusy} onChange={(event) => { const course = courses.find(item => item.id === Number(event.target.value)); if (course && confirmLeave()) router.push(coursePath(basePath, course.id, canEditCourseContent(course) ? 'clases' : 'datos')); }}>{courses.map(course => <option key={course.id} value={course.id}>{course.nombre}</option>)}</select></label>
           <span className={`teacher-status teacher-status--${selectedCourse.estado}`}>{courseStatusLabels[selectedCourse.estado]}</span>
+          {canEditCourseContent(selectedCourse) && <button type="button" className="btn btn-secondary" onClick={() => void setCourseVisibility()} disabled={workspaceBusy}>{selectedCourse.estado === 'oculto' ? <><Eye size={17} /> Mostrar a alumnos</> : <><EyeOff size={17} /> Ocultar de alumnos</>}</button>}
         </div>
-        {selectedCourse.estado !== 'aprobado' && <div className="teacher-alert"><AlertCircle size={22} /><span>{selectedCourse.estado === 'pendiente' ? 'Materia en revisión. Puedes editar su nombre, descripción e imagen. Las clases y los alumnos se habilitarán al aprobarla.' : 'Materia rechazada. Puedes corregir sus datos y contactar al administrador para revisar la propuesta.'}</span></div>}
+        {selectedCourse.estado === 'oculto' && <div className="teacher-alert" role="status"><EyeOff size={20} /><span>Materia oculta para los alumnos. Conservas el contenido y puedes seguir editando sus clases, exámenes e inscripciones.</span></div>}
+        {!canEditCourseContent(selectedCourse) && <div className="teacher-alert"><AlertCircle size={22} /><span>{selectedCourse.estado === 'pendiente' ? 'Materia en revisión. Puedes editar su nombre, descripción e imagen. Las clases y los alumnos se habilitarán al aprobarla.' : 'Materia rechazada. Puedes corregir sus datos y contactar al administrador para revisar la propuesta.'}</span></div>}
         <>
           <nav className="teacher-tabs" aria-label="Secciones de la materia">
-            {courseSections.filter(section => selectedCourse.estado === 'aprobado' || section.id === 'datos').map(({ id, label, icon: Icon }) => <Link key={id} id={`course-tab-${id}`} href={coursePath(basePath, selectedCourse.id, id)} aria-current={activeSection === id ? 'page' : undefined}><Icon size={17} />{label}{!workspaceLoading && (id === 'clases' || id === 'examenes') && <span>{id === 'clases' ? classes.length : exams.length}</span>}</Link>)}
+            {courseSections.filter(section => canEditCourseContent(selectedCourse) || section.id === 'datos').map(({ id, label, icon: Icon }) => <Link key={id} id={`course-tab-${id}`} href={coursePath(basePath, selectedCourse.id, id)} aria-current={activeSection === id ? 'page' : undefined}><Icon size={17} />{label}{!workspaceLoading && (id === 'clases' || id === 'examenes') && <span>{id === 'clases' ? classes.length : exams.length}</span>}</Link>)}
           </nav>
           {workspaceLoading && activeSection !== 'datos' ? <div className="card teacher-empty" role="status">Cargando el contenido de la materia...</div> : workspaceError && activeSection !== 'datos' ? <div className="card teacher-empty" role="alert"><AlertCircle size={28} /><p>{workspaceError}</p><button type="button" className="btn btn-secondary" onClick={() => { if (confirmLeave()) selectCourse(selectedCourse); }}>Reintentar</button></div> : <>
             <div id="course-panel-clases" role="region" aria-labelledby="course-tab-clases" hidden={activeSection !== 'clases'} tabIndex={0}>
@@ -1140,7 +1009,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                                 <button
                                   type="button"
                                   onClick={() => router.push(`${coursePath(basePath, selectedCourse.id, 'clases')}/${c.id}/editar`)}
-                                  style={{ border: 'none', background: 'none', color: '#0073A5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  style={{ border: 'none', background: 'none', color: 'var(--primary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                                   className="teacher-icon-action"
                                   aria-label={`Editar clase: ${c.titulo}`}
                                   title="Editar clase"
@@ -1165,16 +1034,16 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                                 {c.requiere_tarea ? 'Con Tarea' : 'Sin Tarea'}
                               </span>
                               <span style={styles.classMetaItem}>
-                                <Video size={12} color="#0073A5" /> {videoList.length} video{videoList.length !== 1 ? 's' : ''}
+                                <Video size={12} color="var(--primary)" /> {videoList.length} video{videoList.length !== 1 ? 's' : ''}
                               </span>
                               {videoList.length === 0 && c.presentacion_url && (
                                 <span style={styles.classMetaItem}>
-                                  <FileText size={12} color="#0073A5" /> Presentación
+                                  <FileText size={12} color="var(--primary)" /> Presentación
                                 </span>
                               )}
                               {(c.secciones?.length ?? 0) > 0 && (
                                 <span style={styles.classMetaItem}>
-                                  <Layers size={12} color="#0073A5" /> {c.secciones!.length} sección{c.secciones!.length !== 1 ? 'es' : ''}
+                                  <Layers size={12} color="var(--primary)" /> {c.secciones!.length} sección{c.secciones!.length !== 1 ? 'es' : ''}
                                 </span>
                               )}
                             </div>
@@ -1186,270 +1055,21 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                     )}
                   </div>}
 
-                  {showClassForm && <form onSubmit={handleSaveClass} onChange={() => setClassFormDirty(true)} style={styles.form}>
-                    {classError && <div className="teacher-alert teacher-alert--error" role="alert">{classError}</div>}
-                    <div className="form-group">
-                      <label className="form-label" htmlFor="class-title">Título de la clase</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        id="class-title"
-                        autoFocus
-                        value={newClassTitle}
-                        onChange={(e) => setNewClassTitle(e.target.value)}
-                        placeholder="Ej. Clase 1: Resistencia y Ensayos de Compresión"
-                        required
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label" htmlFor="class-description">Descripción e instrucciones</label>
-                      <textarea
-                        className="form-textarea"
-                        rows={2}
-                        id="class-description"
-                        value={newClassDesc}
-                        onChange={(e) => setNewClassDesc(e.target.value)}
-                        placeholder="Describe de qué trata la clase e instrucciones para la tarea..."
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Contenido central de la clase</label>
-                      <div style={{ display: 'flex', gap: '16px', marginBottom: '14px', flexWrap: 'wrap' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}>
-                          <input
-                            type="radio"
-                            name="contenidoCentral"
-                            checked={contenidoCentral === 'video'}
-                            onChange={() => setContenidoCentral('video')}
-                          />
-                          <Video size={16} color="#0073A5" /> Video(s)
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}>
-                          <input
-                            type="radio"
-                            name="contenidoCentral"
-                            checked={contenidoCentral === 'presentacion'}
-                            onChange={() => setContenidoCentral('presentacion')}
-                          />
-                          <FileText size={16} color="#0073A5" /> Presentación (PDF, PPT, PPTX)
-                        </label>
-                      </div>
-                    </div>
-
-                    {contenidoCentral === 'video' && (
-                    <div className="form-group">
-                      <label className="form-label">Videos de la Clase (puedes agregar varios, cada uno con su título)</label>
-
-                      {classVideos.length > 0 && (
-                        <div style={styles.videoList}>
-                          {classVideos.map((v, idx) => (
-                            <div key={idx} style={styles.videoChip}>
-                              <Video size={14} color="#0073A5" />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 700, fontSize: '13px' }}>
-                                  {v.titulo || `Video ${idx + 1}`}
-                                </div>
-                                <div style={{ fontSize: '11px', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {v.url}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => removeVideoFromList(idx)}
-                                style={{ border: 'none', background: 'none', color: 'var(--danger)', cursor: 'pointer', display: 'flex' }}
-                                title="Quitar video"
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div style={styles.videoInputRow}>
-                        <input
-                          type="text"
-                          className="form-input"
-                          aria-label="Título del video"
-                          value={videoTituloInput}
-                          onChange={(e) => setVideoTituloInput(e.target.value)}
-                          placeholder="Título del video (ej. Parte 1: Introducción)"
-                          style={{ flex: 3 }}
-                        />
-                        <input
-                          type="url"
-                          className="form-input"
-                          aria-label="Enlace del video"
-                          value={videoUrlInput}
-                          onChange={(e) => setVideoUrlInput(e.target.value)}
-                          placeholder="https://www.youtube.com/watch?v=... o Drive"
-                          style={{ flex: 4 }}
-                        />
-                        <button type="button" onClick={addVideoToList} className="btn btn-secondary">
-                          <Plus size={14} /> Agregar
-                        </button>
-                      </div>
-                      <p style={{ fontSize: '11px', color: '#94A3B8', marginTop: '6px' }}>
-                        Soporta YouTube, Google Drive o enlaces directos. Si dejas el título vacío se numerará automáticamente.
-                      </p>
-                    </div>
-                    )}
-
-                    {contenidoCentral === 'presentacion' && (
-                      <div className="form-group" style={{ padding: '14px', borderRadius: '8px', border: '1px dashed rgba(0,115,165,0.35)', backgroundColor: 'rgba(0,115,165,0.04)' }}>
-                        <label className="form-label">Presentación como artículo central</label>
-                        <p style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>
-                          Sube PDF, PPT o PPTX. Los alumnos la verán en lugar del video (PDF con visor en plataforma; PPT/PPTX descargable).
-                        </p>
-                        <input
-                          type="file"
-                          accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                          disabled={presentacionUploading}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handlePresentacionUpload(f);
-                            e.target.value = '';
-                          }}
-                          style={{ fontSize: '12px', marginBottom: '8px' }}
-                        />
-                        {presentacionUploading && (
-                          <p style={{ fontSize: '12px', color: '#0073A5' }}>Subiendo presentación…</p>
-                        )}
-                        {(presentacionUrl || presentacionLocalFile) && (
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                              <span style={{ fontSize: '12px', fontWeight: 600, color: '#0073A5' }}>
-                                {presentacionNombre || 'Presentación cargada'}
-                              </span>
-                              <button type="button" className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={clearPresentacion}>
-                                Quitar
-                              </button>
-                            </div>
-                            {/\.pdf$/i.test(presentacionNombre || presentacionUrl) ? (
-                              <FileResourcePreview
-                                fileName={presentacionNombre || 'presentacion.pdf'}
-                                fileUrl={presentacionLocalFile ? undefined : toClasePresentacionUrl(presentacionUrl)}
-                                localFile={presentacionLocalFile}
-                                maxHeight={280}
-                                securePdf
-                              />
-                            ) : (
-                              <p style={{ fontSize: '13px', color: '#64748B' }}>
-                                Archivo listo: {presentacionNombre}. Los alumnos podrán descargarlo al ver la clase.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', marginBottom: '16px' }}>
-                      <input
-                        type="checkbox"
-                        id="requiereTareaCheckbox"
-                        checked={requiereTarea}
-                        onChange={(e) => setRequiereTarea(e.target.checked)}
-                        style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                      />
-                      <label htmlFor="requiereTareaCheckbox" style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                        Requiere entrega de tarea por el alumno
-                      </label>
-                    </div>
-
-                    {requiereTarea && (
-                      <div style={styles.tareaSection}>
-                        <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#0073A5', marginBottom: '12px' }}>
-                          Actividad a entregar
-                        </h4>
-                        <div className="form-group">
-                          <label className="form-label">Descripción de la actividad a realizar</label>
-                          <textarea
-                            className="form-textarea"
-                            rows={4}
-                            value={tareaDescripcion}
-                            onChange={(e) => setTareaDescripcion(e.target.value)}
-                            placeholder="Indica qué debe hacer el alumno: formato, criterios, plazo, etc."
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Recursos para la entrega (opcional)</label>
-                          <p style={{ fontSize: '11px', color: '#64748B', marginBottom: '8px' }}>
-                            Plantillas o material de apoyo (.pdf, .docx, .xls, .xlsx, .csv). Puedes agregar varios.
-                          </p>
-                          {tareaRecursos.length > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
-                              {tareaRecursos.map((rec, idx) => (
-                                <div key={idx} style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', backgroundColor: '#FAFBFD' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                    <span style={{ fontSize: '13px', fontWeight: 600 }}>
-                                      {rec.archivo_nombre}
-                                    </span>
-                                    <button type="button" onClick={() => removeTareaRecurso(idx)} style={styles.chipRemoveBtn} title="Quitar recurso">
-                                      <X size={14} />
-                                    </button>
-                                  </div>
-                                  <FileResourcePreview
-                                    fileName={rec.archivo_nombre}
-                                    fileUrl={rec.archivo_url}
-                                    maxHeight={240}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <input
-                            type="file"
-                            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) handleTareaRecursoUpload(f);
-                              e.target.value = '';
-                            }}
-                            style={{ fontSize: '12px' }}
-                            disabled={tareaRecursoUploading}
-                          />
-                          {tareaRecursoUploading && (
-                            <p style={{ fontSize: '12px', color: '#0073A5', marginTop: '8px' }}>Subiendo recurso...</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <details className="teacher-resources">
-                      <summary>Recursos y secciones de apoyo <span>Opcional</span></summary>
-                      <p>Agrega videos, lecturas, referencias y archivos para acompañar la clase.</p>
-                    <ClaseSeccionesEditor
-                      secciones={classSecciones}
-                      onChange={(secciones) => { setClassSecciones(secciones); setClassFormDirty(true); }}
-                      onUploadingChange={setSeccionesUploading}
-                      libros={bibliotecaLibros}
-                      copyFromClasses={classes
-                        .filter((c) => c.id !== editingClassId)
-                        .map((c) => ({
-                          id: c.id,
-                          titulo: c.titulo,
-                          secciones: c.secciones?.length
-                            ? c.secciones
-                            : resolveSecciones(null, c.materiales, c.referencias),
-                        }))}
-                    />
-
-                    </details>
-                    <div className="teacher-form-actions">
-                      <button type="submit" className="btn btn-primary" disabled={classLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading}>
-                        {classLoading ? 'Guardando...' : editingClassId ? (
-                          <><Check size={16} /> Guardar cambios</>
-                        ) : (
-                          <><Plus size={16} /> Crear Clase</>
-                        )}
-                      </button>
-                      <button type="button" className="btn btn-secondary" disabled={classLoading || presentacionUploading || tareaRecursoUploading || seccionesUploading} onClick={() => { if (confirmLeave()) { resetClassForm(); editorInitialized.current = null; router.push(coursePath(basePath, selectedCourse.id, 'clases')); } }}>
-                          Cancelar
-                        </button>
-                    </div>
-                  </form>}
+                  {showClassForm && (!editingClassId || classes.some(item => item.id === editingClassId)) && <ClassComposer
+                    key={`${userId}-${selectedCourse.id}-${editingClassId || 'new'}`}
+                    course={selectedCourse}
+                    userId={userId}
+                    existing={classes.find(item => item.id === editingClassId) || null}
+                    classes={classes}
+                    books={bibliotecaLibros}
+                    onClose={() => router.push(coursePath(basePath, selectedCourse.id, 'clases'))}
+                    onSaved={(title, edited) => {
+                      setNotice(edited ? `Cambios de «${title}» guardados.` : `Clase «${title}» publicada.`);
+                      router.replace(coursePath(basePath, selectedCourse.id, 'clases'));
+                      void fetchClasses(selectedCourse.id);
+                    }}
+                  />}
+                  {showClassForm && editingClassId && !classes.some(item => item.id === editingClassId) && <p role="alert" className="teacher-alert teacher-alert--error">No se encontró la clase que quieres editar.</p>}
                 </div>
 
 
@@ -1480,7 +1100,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                           <div key={ex.id} style={styles.classItem}>
                             <div style={styles.classHeader}>
                               <div style={styles.classTitleBlock}>
-                                <FileText size={16} color="#0073A5" />
+                                <FileText size={16} color="var(--primary)" />
                                 <strong>{ex.titulo}</strong>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1490,7 +1110,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                                 <button
                                   type="button"
                                   onClick={() => { editorInitialized.current = null; router.push(`${coursePath(basePath, selectedCourse.id, 'examenes')}/${ex.id}/editar`); }}
-                                  style={{ border: 'none', background: 'none', color: '#0073A5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  style={{ border: 'none', background: 'none', color: 'var(--primary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                                   className="teacher-icon-action"
                                   aria-label={`Editar examen: ${ex.titulo}`}
                                   title="Editar examen"
@@ -1576,6 +1196,12 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                         />
                       </div>
 
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="exam-question-count-import">Preguntas por intento</label>
+                        <input id="exam-question-count-import" type="number" className="form-input" value={newExamQuestionCount} min="0" step="1" {...(showExamBuilder ? { max: questions.length } : {})} onChange={event => setNewExamQuestionCount(Math.max(0, Number.parseInt(event.target.value, 10) || 0))} aria-describedby="exam-question-help-import" />
+                        <p id="exam-question-help-import" style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>0 muestra todas las preguntas. Otro número selecciona al azar esa cantidad del banco y la conserva durante el intento.</p>
+                      </div>
+
                       <div className="form-group" style={{ padding: '20px', border: '2px dashed #10B981', borderRadius: '8px', textAlign: 'center', backgroundColor: '#FAFDFB', cursor: 'pointer', marginBottom: '20px' }}>
                         <label htmlFor="excelFileInput" style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                           <FileText size={32} color="#10B981" />
@@ -1659,6 +1285,12 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                         />
                       </div>
 
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="exam-question-count-manual">Preguntas por intento</label>
+                        <input id="exam-question-count-manual" type="number" className="form-input" value={newExamQuestionCount} min="0" step="1" {...(showExamBuilder ? { max: questions.length } : {})} onChange={event => setNewExamQuestionCount(Math.max(0, Number.parseInt(event.target.value, 10) || 0))} aria-describedby="exam-question-help-manual" />
+                        <p id="exam-question-help-manual" style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '6px' }}>0 muestra todas las preguntas. Otro número selecciona al azar esa cantidad del banco y la conserva durante el intento.</p>
+                      </div>
+
                       <div style={{ borderTop: '1px solid var(--border)', paddingTop: '20px', marginBottom: '20px' }}>
                         <h4 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span>Preguntas ({questions.length})</span>
@@ -1670,7 +1302,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                         {questions.map((q, qIdx) => (
                           <div key={qIdx} style={{ padding: '16px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '16px', backgroundColor: '#F8FAFC' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                              <strong style={{ fontSize: '14px', color: '#0073A5' }}>Pregunta {qIdx + 1}</strong>
+                              <strong style={{ fontSize: '14px', color: 'var(--primary)' }}>Pregunta {qIdx + 1}</strong>
                               {questions.length > 1 && (
                                 <button type="button" onClick={() => removeQuestion(qIdx)} style={{ border: 'none', background: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
                                   Eliminar Pregunta
@@ -1969,6 +1601,10 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
                 {editCourseImagen && (
                   <img src={toAssetUrl(editCourseImagen)} alt="" style={{ maxHeight: '120px', borderRadius: '8px' }} />
                 )}
+                <div className="grid-2" style={{ marginTop: '20px', gap: '20px' }}>
+                  <div className="form-group"><label className="form-label" htmlFor="edit-course-color">Color de la materia</label><div style={{ display: 'flex', gap: '8px' }}><input type="color" aria-label="Elegir color de la materia" value={toColorPickerValue(editCourseColor)} onChange={event => setEditCourseColor(event.target.value)} style={{ width: '48px', minHeight: '44px' }} /><input id="edit-course-color" className="form-input" value={editCourseColor} onChange={event => setEditCourseColor(event.target.value)} placeholder="Predeterminado" /></div><p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '6px' }}>Destaca la tarjeta que ven los alumnos. Deja vacío para usar el color del campus.</p></div>
+                  <div className="form-group"><label className="form-label" htmlFor="edit-course-reading-color">Color de lecturas</label><div style={{ display: 'flex', gap: '8px' }}><input type="color" aria-label="Elegir color de lecturas" value={toColorPickerValue(editCourseReadingColor || '#7C3AED')} onChange={event => setEditCourseReadingColor(event.target.value)} style={{ width: '48px', minHeight: '44px' }} /><input id="edit-course-reading-color" className="form-input" value={editCourseReadingColor} onChange={event => setEditCourseReadingColor(event.target.value)} placeholder="Predeterminado" /></div><p style={{ color: 'var(--text-secondary)', fontSize: '12px', marginTop: '6px' }}>Se usa al organizar lecturas de clases anteriores. Cada sección conserva su propio color.</p></div>
+                </div>
                 <div className="teacher-form-actions">
                   <button type="submit" className="btn btn-primary" disabled={courseDetailsSaving}><Check size={17} />{courseDetailsSaving ? 'Guardando...' : 'Guardar cambios'}</button>
                 </div>
@@ -1982,6 +1618,7 @@ export default function CourseManagement({ role }: { role: 'maestro' | 'administ
               </div>
 
 
+              {isAdmin && <div className="card" style={{ borderColor: '#f4c9cc', marginTop: '24px' }}><h3 style={styles.cardTitle}>Eliminar materia</h3><p style={styles.cardSubtitle}>Elimina permanentemente el contenido y los registros académicos asociados. Para retirar el acceso conservando los datos, oculta la materia.</p><button type="button" className="btn btn-secondary" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={workspaceBusy} onClick={() => void deleteCourse()}><Trash2 size={17} /> Eliminar permanentemente</button></div>}
             </div>
             <div id="course-panel-biografias" role="region" aria-labelledby="course-tab-biografias" hidden={activeSection !== 'biografias'} tabIndex={0}>
               {activeSection === 'biografias' && <div className="card"><BiografiasPanel cursoId={selectedCourse.id} variant="teacher" /></div>}
@@ -2004,7 +1641,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: {
     fontSize: '28px',
     fontWeight: '800',
-    color: '#0073A5',
+    color: 'var(--primary)',
     marginBottom: '6px',
   },
   subtitle: {
@@ -2102,7 +1739,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: '14px',
     fontWeight: 700,
-    color: '#0073A5',
+    color: 'var(--primary)',
     backgroundColor: 'rgba(0,115,165,0.08)',
     padding: '6px 12px',
     borderRadius: '6px',
@@ -2164,7 +1801,7 @@ const styles: Record<string, React.CSSProperties> = {
   activeModuleSelectBtn: {
     borderColor: '#0073A5',
     backgroundColor: 'rgba(0, 115, 165, 0.05)',
-    color: '#0073A5',
+    color: 'var(--primary)',
   },
   inlineForm: {
     display: 'flex',
@@ -2236,7 +1873,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
     fontSize: '11px',
     fontWeight: 600,
-    color: '#0073A5',
+    color: 'var(--primary)',
     backgroundColor: 'rgba(0, 115, 165, 0.06)',
     padding: '3px 8px',
     borderRadius: '4px',
@@ -2281,7 +1918,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
     fontSize: '11px',
     fontWeight: '600',
-    color: '#0073A5',
+    color: 'var(--primary)',
     backgroundColor: 'rgba(0, 115, 165, 0.06)',
     padding: '3px 8px',
     borderRadius: '4px',
@@ -2334,6 +1971,6 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: '400px',
     fontSize: '16px',
     fontWeight: '500',
-    color: '#0073A5',
+    color: 'var(--primary)',
   },
 };

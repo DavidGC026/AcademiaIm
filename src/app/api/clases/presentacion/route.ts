@@ -36,7 +36,7 @@ async function puedeVerPresentacion(ref: string, session: { userId: number; role
   const [rows] = (await pool.execute(
     `SELECT c.curso_id FROM clases c WHERE c.presentacion_url = ?`,
     [ref]
-  )) as any[];
+  )) as unknown as [{ curso_id: number }[], unknown];
 
   if (rows.length === 0) return false;
   return estudiantePuedeAccederCurso(session.userId, rows[0].curso_id);
@@ -50,8 +50,11 @@ export async function POST(request: Request) {
   }
 
   const formData = await request.formData();
-  const file = formData.get('file') as File | null;
-  if (!file) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  const file = formData.get('file');
+  if (!(file instanceof File)) return NextResponse.json({ error: 'Falta el archivo' }, { status: 400 });
+  if (!file.size || file.size > 25 * 1024 * 1024) {
+    return NextResponse.json({ error: 'El archivo debe tener contenido y pesar como máximo 25 MB.' }, { status: 400 });
+  }
 
   const ext = extname(file.name).toLowerCase();
   if (!ALLOWED.has(ext)) {

@@ -4,6 +4,7 @@ import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { ExamImportError, parseExamWorkbook } from '@/lib/examImport';
 import { ensureExamReleaseSchema } from '@/lib/examSchema';
+import { validatePreguntasMostrar } from '@/lib/examenPreguntas';
 
 export async function POST(request: Request) {
   let connection: PoolConnection | undefined;
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
     }
 
     const preguntas = parseExamWorkbook(new Uint8Array(await file.arrayBuffer()));
+    let count: number;
+    try { count = validatePreguntasMostrar(formData.get('preguntas_mostrar'), preguntas.length); }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
     const [cursos] = await pool.execute<RowDataPacket[]>(
       session.roleName === 'administrador' ? 'SELECT id FROM cursos WHERE id = ?' : 'SELECT id FROM cursos WHERE id = ? AND creado_por_id = ?',
       session.roleName === 'administrador' ? [cursoId] : [cursoId, session.userId]
@@ -45,8 +49,8 @@ export async function POST(request: Request) {
     await connection.beginTransaction();
     transactionStarted = true;
     const [examResult] = await connection.execute<ResultSetHeader>(
-      "INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, modo_liberacion) VALUES (?, ?, ?, ?, 'bloqueado')",
-      [cursoId, titulo, descripcion, limiteTiempo]
+      "INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, preguntas_mostrar, modo_liberacion) VALUES (?, ?, ?, ?, ?, 'bloqueado')",
+      [cursoId, titulo, descripcion, limiteTiempo, count]
     );
     const examenId = examResult.insertId;
 

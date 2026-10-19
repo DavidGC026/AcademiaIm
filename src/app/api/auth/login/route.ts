@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import { setSessionCookie } from '@/lib/auth';
+import { rateLimit, resetRateLimit } from '@/lib/rateLimit';
 
 export async function POST(request: Request) {
   try {
@@ -11,6 +12,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Email y contraseña son obligatorios' },
         { status: 400 }
+      );
+    }
+
+    // Limitar intentos por IP+correo: máx. 8 en 5 minutos (frena fuerza bruta).
+    const ipForLimit = (request.headers.get('x-forwarded-for') || '127.0.0.1').split(',')[0].trim();
+    const limitKey = `login:${ipForLimit}:${String(email).toLowerCase()}`;
+    const limit = rateLimit(limitKey, 8, 5 * 60_000);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: `Demasiados intentos. Intenta de nuevo en ${limit.retryAfterSeconds} segundos.` },
+        { status: 429, headers: { 'Retry-After': String(limit.retryAfterSeconds) } }
       );
     }
 
@@ -61,6 +73,9 @@ export async function POST(request: Request) {
 
     // Guardar cookie de sesión
     await setSessionCookie(payload);
+
+    // Login correcto: liberar el contador de intentos.
+    resetRateLimit(limitKey);
 
     return NextResponse.json({
       success: true,

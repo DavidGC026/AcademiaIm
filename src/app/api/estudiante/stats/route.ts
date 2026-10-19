@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { calculateAcademicAverage } from '@/lib/academicAverage';
 
 export async function GET() {
   try {
@@ -50,22 +51,7 @@ export async function GET() {
       [session.userId]
     ) as any[];
 
-    const tasksAvg = tareasGradeResult[0]?.avg_grade ? Number(tareasGradeResult[0].avg_grade) : null;
-    const tasksCount = tareasGradeResult[0]?.count_grade ? Number(tareasGradeResult[0].count_grade) : 0;
-
-    const examsAvg = examenesGradeResult[0]?.avg_grade ? Number(examenesGradeResult[0].avg_grade) : null;
-    const examsCount = examenesGradeResult[0]?.count_grade ? Number(examenesGradeResult[0].count_grade) : 0;
-
-    let promedio = '94.5'; // Promedio de demostración por defecto si no hay nada calificado
-
-    if (tasksAvg !== null && examsAvg !== null) {
-      // Si tiene ambas cosas calificadas, promediamos ambas
-      promedio = ((tasksAvg + examsAvg) / 2).toFixed(1);
-    } else if (tasksAvg !== null) {
-      promedio = tasksAvg.toFixed(1);
-    } else if (examsAvg !== null) {
-      promedio = examsAvg.toFixed(1);
-    }
+    const promedio = calculateAcademicAverage(tareasGradeResult[0], examenesGradeResult[0]);
 
     return NextResponse.json({
       cursosActivos,

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession, setSessionCookie } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
+import { cleanText, cleanTextOrNull } from '@/lib/sanitize';
 import type { RowDataPacket } from 'mysql2';
 
 // GET: Obtener datos de perfil
@@ -49,10 +50,10 @@ export async function PUT(request: Request) {
     }
 
     const {
-      nombre,
-      id_estudiante,
-      apellido_paterno,
-      apellido_materno,
+      nombre: nombreRaw,
+      id_estudiante: idEstudianteRaw,
+      apellido_paterno: apellidoPaternoRaw,
+      apellido_materno: apellidoMaternoRaw,
       fecha_nacimiento,
       foto_perfil,
       password, // Nueva contraseña opcional
@@ -76,6 +77,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ success: true, message: 'Contraseña actualizada.' });
     }
 
+    const nombre = cleanText(nombreRaw, 150);
     if (!nombre) {
       return NextResponse.json({ error: 'El nombre es obligatorio' }, { status: 400 });
     }
@@ -90,9 +92,9 @@ export async function PUT(request: Request) {
     ];
     const values: (string | null | number)[] = [
       nombre,
-      id_estudiante || null,
-      apellido_paterno || null,
-      apellido_materno || null,
+      cleanTextOrNull(idEstudianteRaw, 50),
+      cleanTextOrNull(apellidoPaternoRaw, 100),
+      cleanTextOrNull(apellidoMaternoRaw, 100),
       fecha_nacimiento || null,
     ];
     if (foto_perfil !== undefined) {

@@ -184,7 +184,7 @@ export default function MateriaDetailPage({ params }: { params: Promise<{ id: st
         ) : (
           <div style={styles.list}>
             {exams.map((ex) => {
-              const done = !ex.permite_reintento && (ex.intento_fecha != null || ex.mi_calificacion != null);
+              const done = !ex.permite_reintento && ex.mi_calificacion != null;
               return (
                 <div
                   key={ex.id}

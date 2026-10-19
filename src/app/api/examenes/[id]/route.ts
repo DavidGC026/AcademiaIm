@@ -7,16 +7,10 @@ import { canManageExam, getExam, getExamQuestions } from '@/lib/examAccess';
 import { getExamAvailability } from '@/lib/examAvailability';
 import { ensureExamAttemptSchema } from '@/lib/examSchema';
 import { attemptSnapshot, ExamValidationError, gradeExam, readExamJson } from '@/lib/examGrading';
-import type { ExamAttemptSnapshot, ExamReleaseConfig } from '@/lib/examTypes';
-
-type AttemptRow = RowDataPacket & {
-  id: number;
-  calificacion: number | null;
-  finalizado_at: Date;
-  respuestas: unknown;
-  historial: unknown;
-  permite_reintento: number;
-};
+import type { ExamAttemptSnapshot, ExamDetails } from '@/lib/examTypes';
+import { getOrStartAttempt, type AttemptRow } from '@/lib/examAttempts';
+import { readActiveAttempt, remainingSeconds, submissionExpired } from '@/lib/examAttemptState';
+import { parsePreguntasIds, questionsForIds, validatePreguntasMostrar } from '@/lib/examenPreguntas';
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -41,24 +35,59 @@ export async function GET(_request: Request, { params }: Context) {
       return NextResponse.json({ exam, preguntas: questions, clases_con_tarea: classes });
     }
 
-    const [attempts] = await pool.execute<AttemptRow[]>(
-      'SELECT * FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ?', [examenId, session.userId]
-    );
-    const attempt = attempts[0];
-    const completed = attempt?.calificacion != null && !attempt.permite_reintento;
-    const snapshot = attempt ? attemptSnapshot(attempt) : null;
-    const availability = await getExamAvailability(exam, session.userId);
-    const questions = availability.disponible || completed ? await getExamQuestions(examenId) : [];
-    return NextResponse.json({
-      exam,
-      ...availability,
-      preguntas: questions.map(question => ({
-        ...question,
-        opciones: question.opciones.map(option => ({ id: option.id, pregunta_id: option.pregunta_id, texto: option.texto })),
-      })),
-      mi_intento: snapshot ? { ...snapshot, respuestas: completed ? snapshot.respuestas : null, permite_reintento: Boolean(attempt.permite_reintento) } : null,
-      respuestasCorrectas: completed ? Object.fromEntries(questions.map(question => [question.id, question.opciones.find(option => option.es_correcta === 1)?.id])) : {},
-    });
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute('SELECT id FROM usuarios WHERE id = ? FOR UPDATE', [session.userId]);
+      const [lockedExams] = await connection.execute<(RowDataPacket & ExamDetails)[]>(
+        'SELECT * FROM examenes WHERE id = ? LOCK IN SHARE MODE', [examenId],
+      );
+      if (!lockedExams.length) {
+        await connection.rollback();
+        return NextResponse.json({ error: 'Examen no encontrado' }, { status: 404 });
+      }
+      const currentExam = { ...exam, ...lockedExams[0] };
+      const [attempts] = await connection.execute<AttemptRow[]>(
+        'SELECT * FROM intentos_examenes WHERE examen_id = ? AND usuario_id = ? FOR UPDATE', [examenId, session.userId],
+      );
+      const attempt = attempts[0];
+      const completed = attempt?.calificacion != null && !attempt.permite_reintento;
+      const snapshot = attempt ? attemptSnapshot(attempt) : null;
+      const availability = await getExamAvailability(currentExam, session.userId, connection);
+      let questions = [] as Awaited<ReturnType<typeof getExamQuestions>>;
+      let seconds: number | null = null;
+      let startedAt: string | null = null;
+      let activeLimit = currentExam.limite_tiempo;
+      let expired = false;
+      if (completed) {
+        questions = snapshot?.preguntas || questionsForIds(await getExamQuestions(examenId, connection), parsePreguntasIds(attempt.preguntas_ids));
+      } else if (availability.disponible) {
+        const { active } = await getOrStartAttempt(connection, currentExam, session.userId, attempt);
+        questions = active.preguntas;
+        seconds = remainingSeconds(active);
+        startedAt = active.iniciado_at;
+        activeLimit = active.limite_tiempo;
+        expired = submissionExpired(active);
+      }
+      await connection.commit();
+      return NextResponse.json({
+        exam: { ...currentExam, limite_tiempo: activeLimit },
+        ...availability,
+        tiempo_restante: seconds,
+        inicio_intento: startedAt,
+        intento_vencido: expired,
+        preguntas: questions.map(question => ({
+          ...question,
+          opciones: question.opciones.map(option => ({ id: option.id, pregunta_id: option.pregunta_id, texto: option.texto })),
+        })),
+        // Las claves y el snapshot completo son exclusivos de las vistas docentes.
+        mi_intento: snapshot ? { calificacion: snapshot.calificacion, fecha: snapshot.fecha, respuestas: completed ? snapshot.respuestas : null, permite_reintento: Boolean(attempt.permite_reintento) } : null,
+        respuestasCorrectas: completed ? Object.fromEntries(questions.map(question => [question.id, question.opciones.find(option => option.es_correcta === 1)?.id])) : {},
+      });
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally { connection.release(); }
   } catch (error) {
     console.error('Error al obtener examen:', error);
     return NextResponse.json({ error: 'Error al cargar el examen' }, { status: 500 });
@@ -94,8 +123,8 @@ export async function POST(request: Request, { params }: Context) {
       return NextResponse.json({ error: 'Ya entregaste este examen. Tu maestro debe habilitar un nuevo intento.' }, { status: 409 });
     }
     // Compartir el bloqueo permite entregas simultáneas y ordena los cambios del maestro.
-    const [releaseRows] = await connection.execute<(RowDataPacket & ExamReleaseConfig)[]>(
-      'SELECT modo_liberacion, clase_requisito_id FROM examenes WHERE id = ? LOCK IN SHARE MODE', [examenId],
+    const [releaseRows] = await connection.execute<(RowDataPacket & ExamDetails)[]>(
+      'SELECT * FROM examenes WHERE id = ? LOCK IN SHARE MODE', [examenId],
     );
     if (!releaseRows.length) {
       await connection.rollback();
@@ -108,25 +137,31 @@ export async function POST(request: Request, { params }: Context) {
       transactionStarted = false;
       return NextResponse.json({ error: availability.motivo_bloqueo }, { status: 403 });
     }
-    const graded = gradeExam(await getExamQuestions(examenId, connection), respuestas);
+    if (!readActiveAttempt(previous?.intento_en_curso) && (Number(releaseRows[0].limite_tiempo) > 0 || Number(releaseRows[0].preguntas_mostrar) > 0)) {
+      await connection.rollback();
+      transactionStarted = false;
+      return NextResponse.json({ error: 'Abre el examen antes de entregar para iniciar el tiempo y asignar las preguntas.' }, { status: 409 });
+    }
+    const { active, attemptId } = await getOrStartAttempt(connection, { ...exam, ...releaseRows[0] }, session.userId, previous);
+    const expired = submissionExpired(active);
+    if (expired) {
+      await connection.rollback();
+      transactionStarted = false;
+      return NextResponse.json({ error: 'El tiempo de este intento terminó. Tus respuestas siguen en este navegador; solicita a tu maestro que habilite otro intento.', intento_vencido: true }, { status: 409 });
+    }
+    const graded = gradeExam(active.preguntas, respuestas);
     const history = readExamJson<ExamAttemptSnapshot[]>(previous?.historial, []);
     const snapshot = previous ? attemptSnapshot(previous) : null;
     if (snapshot) history.push(snapshot);
-    if (previous) {
-      await connection.execute(
-        `UPDATE intentos_examenes SET calificacion = ?, respuestas = ?, historial = ?, permite_reintento = 0,
-         iniciado_at = CURRENT_TIMESTAMP, finalizado_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [graded.calificacion, JSON.stringify(graded.respuestas), JSON.stringify(history), previous.id]
-      );
-    } else {
-      await connection.execute(
-        'INSERT INTO intentos_examenes (examen_id, usuario_id, calificacion, respuestas, historial) VALUES (?, ?, ?, ?, ?)',
-        [examenId, session.userId, graded.calificacion, JSON.stringify(graded.respuestas), '[]']
-      );
-    }
+    await connection.execute(
+      `UPDATE intentos_examenes SET calificacion = ?, respuestas = ?, historial = ?, permite_reintento = 0,
+       iniciado_at = ?, finalizado_at = CURRENT_TIMESTAMP, preguntas_ids = ?, preguntas_snapshot = ?, intento_en_curso = NULL WHERE id = ?`,
+      [graded.calificacion, JSON.stringify(graded.respuestas), JSON.stringify(history), new Date(active.iniciado_at),
+       JSON.stringify(active.preguntas.map(question => question.id)), JSON.stringify(active.preguntas), attemptId],
+    );
     await connection.commit();
     transactionStarted = false;
-    return NextResponse.json({ success: true, calificacion: graded.calificacion, respuestasCorrectas: graded.respuestasCorrectas });
+    return NextResponse.json({ success: true, calificacion: graded.calificacion, respuestas: graded.respuestas, respuestasCorrectas: graded.respuestasCorrectas });
   } catch (error) {
     if (connection && transactionStarted) await connection.rollback();
     if (error instanceof ExamValidationError || error instanceof SyntaxError) {
@@ -157,7 +192,7 @@ export async function PUT(request: Request, { params }: Context) {
     if (!exam) return NextResponse.json({ error: 'Examen no encontrado' }, { status: 404 });
     if (!canManageExam(exam, session)) return NextResponse.json({ error: 'No tienes permiso para editar este examen' }, { status: 403 });
 
-    const { titulo, descripcion, limite_tiempo, preguntas } = await request.json() as { titulo?: string; descripcion?: string; limite_tiempo?: number; preguntas?: QuestionInput[] };
+    const { titulo, descripcion, limite_tiempo, preguntas, preguntas_mostrar } = await request.json() as { titulo?: string; descripcion?: string; limite_tiempo?: number; preguntas_mostrar?: number; preguntas?: QuestionInput[] };
     if (!titulo?.trim() || !Array.isArray(preguntas) || preguntas.length === 0) {
       return NextResponse.json({ error: 'El examen necesita título y al menos una pregunta' }, { status: 400 });
     }
@@ -170,13 +205,18 @@ export async function PUT(request: Request, { params }: Context) {
       }
     }
 
+    let count: number;
+    try { count = validatePreguntasMostrar(preguntas_mostrar ?? exam.preguntas_mostrar, preguntas.length); }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+    const minutes = Number(limite_tiempo ?? 0);
+    if (!Number.isSafeInteger(minutes) || minutes < 0 || minutes > 2147483647) return NextResponse.json({ error: 'El tiempo debe ser un número entero de minutos (0 para sin límite).' }, { status: 400 });
     connection = await pool.getConnection();
     await connection.beginTransaction();
     transactionStarted = true;
 
     await connection.execute(
-      'UPDATE examenes SET titulo = ?, descripcion = ?, limite_tiempo = ? WHERE id = ?',
-      [titulo.trim(), descripcion || '', Number(limite_tiempo) || 0, examenId]
+      'UPDATE examenes SET titulo = ?, descripcion = ?, limite_tiempo = ?, preguntas_mostrar = ? WHERE id = ?',
+      [titulo.trim(), descripcion || '', minutes, count, examenId]
     );
 
     const existing = await getExamQuestions(examenId, connection);

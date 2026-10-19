@@ -76,7 +76,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
   }, [review?.studentId]);
 
   const enableAttempt = async (student: ExamStudentResult) => {
-    if (!confirm(`¿Habilitar un nuevo intento para ${student.nombre}? Su calificación anterior se conservará en el historial.`)) return;
+    if (!confirm(`¿${student.en_curso ? 'Reiniciar el intento abierto' : 'Habilitar un nuevo intento'} para ${student.nombre}? ${student.intento ? 'Su calificación anterior se conservará en el historial.' : 'El alumno podrá volver a abrirlo con el tiempo completo.'}`)) return;
     setBusyStudent(student.alumno_id);
     setError('');
     setNotice('');
@@ -87,7 +87,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo habilitar el intento.');
-      setStudents(current => current.map(row => row.alumno_id === student.alumno_id ? { ...row, permite_reintento: true, disponible: data.disponible, motivo_bloqueo: data.motivo_bloqueo } : row));
+      setStudents(current => current.map(row => row.alumno_id === student.alumno_id ? { ...row, permite_reintento: Boolean(row.intento), en_curso: null, disponible: data.disponible, motivo_bloqueo: data.motivo_bloqueo } : row));
       setNotice(`Nuevo intento autorizado para ${student.nombre}. ${data.disponible ? 'El alumno puede volver a abrir el examen.' : data.motivo_bloqueo}`);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo habilitar el intento.');
@@ -112,7 +112,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
         <p className={styles.course}>{exam.curso_nombre}</p>
         <h1>{exam.titulo}</h1>
         {exam.descripcion && <p>{exam.descripcion}</p>}
-        <div className={styles.meta}><span>{questions.length} preguntas</span><span>{exam.limite_tiempo > 0 ? `${exam.limite_tiempo} minutos` : 'Sin límite de tiempo'}</span></div>
+        <div className={styles.meta}><span>{questions.length} preguntas en el banco</span><span>{exam.preguntas_mostrar > 0 ? `${exam.preguntas_mostrar} preguntas aleatorias por intento` : 'Todas las preguntas por intento'}</span><span>{exam.limite_tiempo > 0 ? `${exam.limite_tiempo} minutos` : 'Sin límite de tiempo'}</span></div>
       </header>
       <ExamReleaseSettings key={`${exam.id}-${exam.modo_liberacion}-${exam.clase_requisito_id}`} exam={exam} classes={taskClasses} onSaved={message => { setNotice(message); setReload(value => value + 1); }} />
       <div className={styles.tabs} role="group" aria-label="Vista del examen">
@@ -136,13 +136,13 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
             <tbody>{visibleStudents.map(student => <tr key={student.alumno_id}>
               <th scope="row"><strong>{student.nombre}</strong><small>{student.email}</small>{!student.inscrito && <small>Sin acceso actual a la materia</small>}</th>
               <td data-label="Última calificación">{student.intento ? <><strong>{student.intento.calificacion}/100</strong><small>Intento {student.historial.length + 1} · {formatDate(student.intento.fecha)}</small></> : '—'}</td>
-              <td data-label="Estado"><span className={student.permite_reintento || !student.disponible ? styles.pending : styles.status}>{student.intento && !student.permite_reintento ? 'Entregado' : !student.disponible ? 'Bloqueado' : student.permite_reintento ? 'Nuevo intento habilitado' : 'Disponible'}</span>
+              <td data-label="Estado"><span className={student.permite_reintento || !student.disponible ? styles.pending : styles.status}>{student.en_curso ? (student.en_curso.vencido ? 'Tiempo agotado' : 'En curso') : student.intento && !student.permite_reintento ? 'Entregado' : !student.disponible ? 'Bloqueado' : student.permite_reintento ? 'Nuevo intento habilitado' : 'Disponible'}</span>
                 {(!student.intento || student.permite_reintento) && !student.disponible && <small>{student.motivo_bloqueo}</small>}
                 {student.permite_reintento && !student.disponible && <small>Nuevo intento autorizado al cumplirse el requisito.</small>}
               </td>
               <td><div className={styles.actions}>
                 {student.intento && <button type="button" className="btn btn-secondary" onClick={() => setReview({ studentId: student.alumno_id, attempt: student.historial.length })}>Ver respuestas e historial</button>}
-                {student.intento && student.inscrito && !student.permite_reintento && <button type="button" className="btn btn-primary" disabled={busyStudent !== null} onClick={() => void enableAttempt(student)}>{busyStudent === student.alumno_id ? 'Habilitando...' : 'Habilitar nuevo intento'}</button>}
+                {(student.en_curso || (student.intento && !student.permite_reintento)) && student.inscrito && <button type="button" className="btn btn-primary" disabled={busyStudent !== null} onClick={() => void enableAttempt(student)}>{busyStudent === student.alumno_id ? 'Habilitando...' : student.en_curso ? 'Reiniciar intento abierto' : 'Habilitar nuevo intento'}</button>}
               </div></td>
             </tr>)}</tbody>
           </table>
@@ -157,7 +157,7 @@ export default function ExamManagement({ examId, role }: { examId: string; role:
             {attempts.map((attempt, index) => <option key={index} value={index}>Intento {index + 1} · {attempt.calificacion}/100 · {formatDate(attempt.fecha)}</option>)}
           </select>
           {selectedAttempt.respuestas === null && <p className={styles.notice}>Este intento conserva su calificación, pero no tiene respuestas guardadas.</p>}
-          <Questions questions={questions} answers={selectedAttempt.respuestas} />
+          <Questions questions={selectedAttempt.preguntas || (selectedAttempt.preguntas_ids ? questions.filter(question => selectedAttempt.preguntas_ids!.includes(question.id)) : questions)} answers={selectedAttempt.respuestas} />
         </section>}
       </section>}
     </>}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -54,9 +54,10 @@ export default function EstudianteCalendario() {
     }
   };
 
-  useEffect(() => {
-    fetchEventos();
-  }, []);
+  const loadEvents = useEffectEvent(() => { void fetchEventos(); });
+  // Load the remote calendar when entering this screen.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { loadEvents(); }, []);
 
   const registrarAsistencia = async (eventoId: number, enlace: string) => {
     try {
@@ -110,7 +111,7 @@ export default function EstudianteCalendario() {
   const upcomingEvents = eventos.filter(ev => new Date(ev.fecha_hora) >= new Date());
 
   return (
-    <div style={styles.container}>
+    <div className="page-container" style={styles.container}>
       <div style={styles.headerRow}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ ...styles.iconWrapper, backgroundColor: 'rgba(0,115,165,0.08)', color: '#0073A5' }}>
@@ -123,7 +124,7 @@ export default function EstudianteCalendario() {
         </div>
       </div>
 
-      <div style={styles.grid}>
+      <div className="responsive-main-grid" style={styles.grid}>
         {/* Columna Izquierda: Calendario mensual */}
         <div style={styles.leftCol}>
           <div className="card" style={{ padding: '24px' }}>

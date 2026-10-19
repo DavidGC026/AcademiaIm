@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
   user: process.env.DB_USER || 'imcyc_user',
-  password: process.env.DB_PASSWORD || 'imcyc_password',
+  password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'academia_imcyc',
   port: parseInt(process.env.DB_PORT || '3306', 10),
   waitForConnections: true,
@@ -449,8 +449,8 @@ export async function initDb() {
   }
 }
 
-// La compilación puede omitir migraciones; el proceso de la aplicación sí las ejecuta.
-if (typeof window === 'undefined' && process.env.ACADEMIA_SKIP_DB_INIT !== '1') {
+// La migración de producción es explícita y respaldada; las semillas sólo se permiten al solicitarlas en desarrollo.
+if (typeof window === 'undefined' && process.env.NODE_ENV !== 'production' && process.env.DB_AUTO_INIT === '1' && process.env.ACADEMIA_SKIP_DB_INIT !== '1') {
   initDb().catch(err => {
     console.error('Error al inicializar la base de datos automáticamente:', err);
   });

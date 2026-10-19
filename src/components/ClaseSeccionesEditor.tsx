@@ -28,6 +28,7 @@ import {
 import { toColorPickerValue } from '@/lib/colorUtils';
 import { isSupportedVideoUrl } from '@/lib/videoEmbed';
 import { MAX_VIDEO_SIZE_MB, VIDEO_ACCEPT, validateVideoFile } from '@/lib/videoFiles';
+import { RESOURCE_ACCEPT, validateResourceFile } from '@/lib/resourceFiles';
 
 interface LibroOption {
   id: number;
@@ -105,7 +106,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
 
   const uploadFile = async (sectionId: string, file: File, video = false) => {
     if (uploadAbort.current) return;
-    const validationError = video ? validateVideoFile(file) : null;
+    const validationError = video ? validateVideoFile(file) : validateResourceFile(file);
     setErrors((prev) => ({ ...prev, [sectionId]: validationError || '' }));
     if (validationError) return;
     const controller = new AbortController();
@@ -128,6 +129,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
           nombre: data.name || file.name,
           url: data.url,
           archivo_nombre: data.name || file.name,
+          ...(typeof data.portada === 'string' ? { portada: data.portada } : {}),
         };
         const current = currentProps.current;
         const section = current.secciones.find((s) => s.id === sectionId);
@@ -433,7 +435,7 @@ export default function ClaseSeccionesEditor({ secciones, onChange, libros, copy
                 {uploading === sec.id ? 'Subiendo…' : 'Subir archivo'}
                 <input
                   type="file"
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx"
+                  accept={RESOURCE_ACCEPT}
                   style={{ display: 'none' }}
                   disabled={uploading !== null}
                   onChange={(e) => {

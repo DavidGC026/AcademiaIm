@@ -1,145 +1,226 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { Sparkles, X, Send, MessageSquare } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { ArrowRight, CalendarClock, Send, Sparkles, X } from 'lucide-react';
+import { toAssetUrl } from '@/lib/assetUrl';
+import ChatMarkdown from '@/components/ChatMarkdown';
+
+interface AssistantAction {
+  id: string;
+  label: string;
+  href: string;
+}
 
 interface Message {
   role: 'user' | 'model';
   content: string;
+  actions?: AssistantAction[];
 }
 
+const INITIAL_MESSAGE: Message = {
+  role: 'model',
+  content: '¡Hola! Puedo ayudarte a encontrar materias y clases, revisar tus pendientes y calendario, o explicarte el tema que estás estudiando. Te orientaré sin resolver tareas ni exámenes por ti.',
+};
+
+const QUICK_QUESTIONS = [
+  '¿Qué actividades tengo pendientes?',
+  '¿Cuáles son mis próximas clases?',
+  'Ayúdame a encontrar una clase',
+];
+
 export default function ChatBot() {
+  const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'model',
-      content: '¡Hola! Soy tu Asistente Académico de la Academia IMCYC. Estoy aquí para responder tus dudas técnicas sobre la dosificación de concreto, química del cemento, aditivos, control de calidad y más. ¿En qué puedo apoyarte hoy?'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const currentClassId = pathname.match(/\/estudiante\/clases\/(\d+)/)?.[1] || null;
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isOpen]);
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, isOpen, loading]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  useEffect(() => {
+    if (isOpen) inputRef.current?.focus();
+  }, [isOpen]);
 
-    const userMsg = input.trim();
+  const sendMessage = async (rawMessage: string) => {
+    const userMessage = rawMessage.trim();
+    if (!userMessage || loading) return;
+
+    const historyPayload = messages.slice(1).map(({ role, content }) => ({ role, content }));
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    setMessages((previous) => [...previous, { role: 'user', content: userMessage }]);
     setLoading(true);
 
     try {
-      // Tomamos el historial excluyendo el primer mensaje de bienvenida
-      const historyPayload = messages.slice(1).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
-
-      const res = await fetch('/api/ia', {
+      const response = await fetch(toAssetUrl('/api/ia'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMsg,
-          history: historyPayload
-        })
+          message: userMessage,
+          history: historyPayload,
+          currentClassId,
+        }),
       });
+      const responseBody = await response.json();
+      if (!response.ok) throw new Error(responseBody.error || 'No se pudo consultar el asistente.');
 
-      if (!res.ok) {
-        throw new Error('Fallo en el servidor al procesar la respuesta');
-      }
-
-      const data = await res.json();
-      setMessages(prev => [...prev, { role: 'model', content: data.reply }]);
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: 'model',
+          content: responseBody.reply,
+          actions: Array.isArray(responseBody.actions) ? responseBody.actions : [],
+        },
+      ]);
     } catch (error) {
-      setMessages(prev => [
-        ...prev, 
-        { role: 'model', content: 'Lo siento, ocurrió un error temporal al procesar tu pregunta. Por favor, intenta de nuevo.' }
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: 'model',
+          content: error instanceof Error
+            ? error.message
+            : 'Ocurrió un error temporal. Intenta nuevamente en un momento.',
+        },
       ]);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void sendMessage(input);
+  };
+
   return (
-    <div style={styles.container}>
-      {/* Botón Flotante */}
+    <div className="chatbot-root" style={styles.container}>
       {!isOpen && (
-        <button onClick={() => setIsOpen(true)} style={styles.floatingBtn} className="btn-primary">
-          <Sparkles size={22} />
-          <span style={styles.floatingText}>Asistente Académico</span>
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          style={styles.floatingButton}
+          className="btn-primary"
+          aria-label="Abrir asistente académico"
+        >
+          <Sparkles size={22} aria-hidden />
+          <span className="chatbot-floating-text" style={styles.floatingText}>Asistente Académico</span>
         </button>
       )}
 
-      {/* Ventana de Chat */}
       {isOpen && (
-        <div style={styles.chatWindow} className="glass-panel">
-          {/* Cabecera */}
-          <div style={styles.chatHeader}>
-            <div style={styles.headerTitle}>
-              <Sparkles size={16} />
-              <span>Asistente IMCYC</span>
+        <section
+          style={styles.chatWindow}
+          className="glass-panel chatbot-panel"
+          aria-label="Asistente académico"
+        >
+          <header style={styles.chatHeader}>
+            <div>
+              <div style={styles.headerTitle}>
+                <Sparkles size={17} aria-hidden />
+                <span>Asistente Académico</span>
+              </div>
+              <div style={styles.headerSubtitle}>
+                {currentClassId ? 'Con contexto de esta clase' : 'Con contexto de tus materias'}
+              </div>
             </div>
-            <button onClick={() => setIsOpen(false)} style={styles.closeBtn}>
-              <X size={18} />
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              style={styles.closeButton}
+              aria-label="Cerrar asistente"
+            >
+              <X size={20} aria-hidden />
             </button>
-          </div>
+          </header>
 
-          {/* Historial de Mensajes */}
-          <div ref={scrollRef} style={styles.messageBox}>
-            {messages.map((msg, idx) => {
-              const isUser = msg.role === 'user';
+          <div ref={scrollRef} style={styles.messageBox} aria-live="polite">
+            {messages.map((message, index) => {
+              const isUser = message.role === 'user';
               return (
-                <div 
-                  key={idx} 
-                  style={{
-                    ...styles.messageWrapper,
-                    justifyContent: isUser ? 'flex-end' : 'flex-start'
-                  }}
+                <div
+                  key={`${message.role}-${index}`}
+                  style={{ ...styles.messageWrapper, justifyContent: isUser ? 'flex-end' : 'flex-start' }}
                 >
-                  <div 
-                    style={{
-                      ...styles.bubble,
-                      ...(isUser ? styles.userBubble : styles.aiBubble)
-                    }}
-                  >
-                    {msg.content}
+                  <div style={styles.messageContent}>
+                    <div style={{ ...styles.bubble, ...(isUser ? styles.userBubble : styles.aiBubble) }}>
+                      {isUser ? message.content : <ChatMarkdown content={message.content} />}
+                    </div>
+                    {!isUser && message.actions && message.actions.length > 0 && (
+                      <div style={styles.actionList}>
+                        {message.actions.map((action) => (
+                          <Link key={action.id} href={action.href} style={styles.actionButton}>
+                            <span>{action.label}</span>
+                            <ArrowRight size={14} aria-hidden />
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })}
+
+            {messages.length === 1 && (
+              <div style={styles.quickQuestionList}>
+                {QUICK_QUESTIONS.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => void sendMessage(question)}
+                    style={styles.quickQuestion}
+                    disabled={loading}
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {loading && (
               <div style={{ ...styles.messageWrapper, justifyContent: 'flex-start' }}>
-                <div style={{ ...styles.bubble, ...styles.aiBubble, color: '#64748B' }}>
-                  Escribiendo respuesta...
+                <div style={{ ...styles.bubble, ...styles.aiBubble, ...styles.loadingBubble }}>
+                  <span style={styles.loadingDot} />
+                  Consultando tus materias…
                 </div>
               </div>
             )}
           </div>
 
-          {/* Barra de Entrada */}
-          <form onSubmit={handleSend} style={styles.inputArea}>
+          <div style={styles.boundaryNote}>
+            <CalendarClock size={13} aria-hidden />
+            Orienta y explica; no realiza actividades evaluables.
+          </div>
+
+          <form onSubmit={handleSubmit} style={styles.inputArea}>
             <input
+              ref={inputRef}
               type="text"
               className="form-input"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Pregunta algo sobre concreto..."
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={currentClassId ? 'Pregunta sobre esta clase…' : 'Pregunta por una materia o pendiente…'}
               style={styles.chatInput}
               disabled={loading}
-              required
+              maxLength={1_500}
+              aria-label="Pregunta para el asistente académico"
             />
-            <button type="submit" style={styles.sendBtn} className="btn btn-primary" disabled={loading}>
-              <Send size={14} />
+            <button
+              type="submit"
+              style={styles.sendButton}
+              className="btn btn-primary"
+              disabled={loading || !input.trim()}
+              aria-label="Enviar pregunta"
+            >
+              <Send size={16} aria-hidden />
             </button>
           </form>
-        </div>
+        </section>
       )}
     </div>
   );
@@ -152,13 +233,13 @@ const styles: Record<string, React.CSSProperties> = {
     right: '24px',
     zIndex: 999,
   },
-  floatingBtn: {
+  floatingButton: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
     padding: '14px 22px',
     borderRadius: '30px',
-    boxShadow: '0 8px 24px rgba(0, 115, 165, 0.3)',
+    boxShadow: '0 12px 32px rgba(0, 115, 165, 0.28)',
     cursor: 'pointer',
     border: 'none',
   },
@@ -168,18 +249,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-heading)',
   },
   chatWindow: {
-    width: '380px',
-    height: '500px',
+    width: '400px',
+    height: 'min(620px, calc(100vh - 48px))',
     display: 'flex',
     flexDirection: 'column',
-    padding: '0',
+    padding: 0,
     overflow: 'hidden',
-    boxShadow: '0 12px 40px rgba(0, 0, 0, 0.15)',
+    borderRadius: '18px',
+    boxShadow: '0 20px 56px rgba(15, 23, 42, 0.2)',
   },
   chatHeader: {
-    backgroundColor: '#0073A5',
+    background: 'linear-gradient(135deg, var(--accent), #00567c)',
     color: '#FFFFFF',
-    padding: '16px 20px',
+    padding: '16px 18px',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -188,24 +270,31 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    fontWeight: '700',
+    fontWeight: 800,
     fontSize: '14px',
     fontFamily: 'var(--font-heading)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
   },
-  closeBtn: {
-    background: 'none',
-    border: 'none',
+  headerSubtitle: {
+    marginTop: '3px',
+    fontSize: '11px',
+    opacity: 0.82,
+  },
+  closeButton: {
+    width: '36px',
+    height: '36px',
+    padding: 0,
+    borderRadius: '50%',
+    border: '1px solid rgba(255,255,255,0.24)',
+    background: 'rgba(255,255,255,0.1)',
     color: '#FFFFFF',
     cursor: 'pointer',
-    opacity: 0.8,
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   messageBox: {
     flex: 1,
-    padding: '20px',
+    padding: '18px',
     overflowY: 'auto',
     display: 'flex',
     flexDirection: 'column',
@@ -216,29 +305,92 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     width: '100%',
   },
+  messageContent: {
+    maxWidth: '88%',
+  },
   bubble: {
-    maxWidth: '80%',
-    padding: '10px 14px',
-    borderRadius: '12px',
+    padding: '11px 14px',
+    borderRadius: '14px',
     fontSize: '13px',
-    lineHeight: '1.45',
+    lineHeight: 1.5,
     whiteSpace: 'pre-wrap',
   },
   userBubble: {
-    backgroundColor: '#0073A5',
+    backgroundColor: 'var(--accent)',
     color: '#FFFFFF',
-    borderBottomRightRadius: '2px',
+    borderBottomRightRadius: '3px',
   },
   aiBubble: {
     backgroundColor: '#FFFFFF',
     color: 'var(--text-primary)',
     border: '1px solid var(--border)',
-    borderBottomLeftRadius: '2px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+    borderBottomLeftRadius: '3px',
+    boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+  },
+  actionList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '7px',
+    marginTop: '8px',
+  },
+  actionButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    padding: '9px 11px',
+    border: '1px solid rgba(0, 115, 165, 0.24)',
+    borderRadius: '9px',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--accent)',
+    fontSize: '12px',
+    fontWeight: 700,
+    textDecoration: 'none',
+  },
+  quickQuestionList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '7px',
+  },
+  quickQuestion: {
+    padding: '9px 12px',
+    border: '1px solid #D7E8F0',
+    borderRadius: '999px',
+    backgroundColor: '#F0F8FB',
+    color: '#075E83',
+    fontSize: '12px',
+    fontWeight: 600,
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  loadingBubble: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: '#64748B',
+  },
+  loadingDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--accent)',
+    boxShadow: '12px 0 0 rgba(0,115,165,.55), 24px 0 0 rgba(0,115,165,.25)',
+    marginRight: '24px',
+  },
+  boundaryNote: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    padding: '7px 12px',
+    borderTop: '1px solid var(--border)',
+    backgroundColor: '#F8FAFC',
+    color: '#64748B',
+    fontSize: '10px',
   },
   inputArea: {
     display: 'flex',
-    padding: '12px 16px',
+    padding: '12px 14px',
     gap: '8px',
     backgroundColor: '#FFFFFF',
     borderTop: '1px solid var(--border)',
@@ -248,18 +400,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     borderRadius: '20px',
   },
-  sendBtn: {
-    width: '38px',
-    height: '38px',
+  sendButton: {
+    width: '40px',
+    height: '40px',
     borderRadius: '50%',
-    padding: '0',
+    padding: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
-  },
-  loading: {
-    fontSize: '12px',
-    color: '#64748B',
   },
 };

@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS examenes (
     titulo VARCHAR(255) NOT NULL,
     descripcion TEXT,
     limite_tiempo INT DEFAULT 0,
+    preguntas_mostrar INT NOT NULL DEFAULT 0,
     modo_liberacion VARCHAR(32) NOT NULL DEFAULT 'abierto',
     clase_requisito_id INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -152,6 +153,9 @@ CREATE TABLE IF NOT EXISTS intentos_examenes (
     permite_reintento TINYINT(1) NOT NULL DEFAULT 0,
     respuestas JSON DEFAULT NULL,
     historial JSON DEFAULT NULL,
+    preguntas_ids JSON DEFAULT NULL,
+    preguntas_snapshot JSON DEFAULT NULL,
+    intento_en_curso JSON DEFAULT NULL,
     FOREIGN KEY (examen_id) REFERENCES examenes(id) ON DELETE CASCADE,
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
     UNIQUE KEY unica_intento (examen_id, usuario_id)

@@ -88,9 +88,9 @@ export async function GET() {
         examenes: cursoExamenes.map((e: any) => ({
           id: e.id,
           titulo: e.titulo,
-          completado: e.intento_id != null,
+          completado: e.examen_calificacion != null,
           calificacion: e.examen_calificacion,
-          fecha: e.examen_fecha,
+          fecha: e.examen_calificacion != null ? e.examen_fecha : null,
         })),
         promedioGeneral: promedioGeneral != null ? Math.round(promedioGeneral * 10) / 10 : null,
       };

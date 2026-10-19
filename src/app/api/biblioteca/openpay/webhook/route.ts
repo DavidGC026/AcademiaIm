@@ -9,12 +9,15 @@ export const runtime = 'nodejs';
 // está configurado; Openpay también permite basic-auth en la URL del webhook.
 export async function POST(request: Request) {
   try {
+    // El token es obligatorio: sin él, cualquiera podría marcar compras como pagadas.
     const expected = process.env.OPENPAY_WEBHOOK_TOKEN;
-    if (expected) {
-      const token = new URL(request.url).searchParams.get('token');
-      if (token !== expected) {
-        return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-      }
+    if (!expected) {
+      console.error('OPENPAY_WEBHOOK_TOKEN no está configurado; webhook rechazado.');
+      return NextResponse.json({ error: 'Webhook no configurado' }, { status: 503 });
+    }
+    const token = new URL(request.url).searchParams.get('token');
+    if (token !== expected) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
     const body = await request.json().catch(() => ({}));

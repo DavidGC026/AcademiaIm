@@ -1,0 +1,133 @@
+.dialog {
+  margin: auto;
+  width: min(840px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  color: var(--text-primary);
+  background: var(--surface);
+  box-shadow: 0 24px 90px #15323f40;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  text-align: left;
+  font: 16px/1.55 var(--font-sans);
+}
+.dialog[open] { display: flex; flex-direction: column; }
+.dialog > form { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.composerHeader, .tourHeader, .steps, .footer { flex-shrink: 0; }
+.composerBody, .tourBody { overflow: auto; min-height: 0; overscroll-behavior: contain; }
+.dialog::backdrop { background: #102e3de0; backdrop-filter: blur(5px); }
+.dialog :is(input, textarea, button, select):focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.dialog button { cursor: pointer; }
+.dialog button:disabled { cursor: wait; opacity: .6; }
+.dialog h2 { font-size: clamp(23px, 3vw, 29px); line-height: 1.3; letter-spacing: -.035em; }
+.dialog h2:focus { outline: none; }
+.composerHeader, .tourHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 30px; }
+.composerHeader { background: var(--bg-light); border-bottom: 1px solid var(--border); }
+.composerHeader p { margin-top: 4px; font-weight: 600; overflow-wrap: anywhere; }
+.eyebrow { display: block; color: var(--primary-hover); font-size: 12px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.iconButton { border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 10px; min-width: 44px; height: 44px; display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; }
+.steps { display: flex; list-style: none; padding: 22px 30px 0; gap: 16px; }
+.steps li { flex: 1; min-width: 0; border-bottom: 2px solid var(--border); padding-bottom: 16px; }
+.steps button { display: flex; align-items: center; gap: 9px; border: 0; background: none; color: var(--text-secondary); font: 600 15px var(--font-sans); min-height: 44px; }
+.steps button:disabled { opacity: 1; cursor: default; }
+.steps button > span { width: 29px; height: 29px; border-radius: 50%; background: var(--bg-light); display: grid; place-items: center; flex-shrink: 0; }
+.steps [aria-current="step"], .steps [data-complete="true"] { border-color: var(--primary); }
+.steps [aria-current="step"] button { color: var(--navy); font-weight: 800; }
+.steps [aria-current="step"] button > span { background: var(--navy); color: white; }
+.steps [data-complete="true"] button > span { background: var(--accent-bright); color: var(--navy); }
+.composerBody { padding: 26px 30px 30px; }
+.intro { margin: 10px 0 24px; color: var(--text-secondary); }
+.fields { border: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.field label, .fileLabel { font-weight: 700; font-size: 15px; }
+.field label > span { margin-left: 6px; font-size: 13px; color: var(--text-secondary); font-weight: 400; }
+.field :is(input, textarea) { font-size: 16px; min-width: 0; width: 100%; }
+.tip { display: flex; gap: 13px; align-items: flex-start; background: var(--bg-light); border-radius: 12px; padding: 18px; color: var(--text-secondary); font-size: 15px; }
+.tip svg { color: var(--primary); flex-shrink: 0; margin-top: 2px; }
+.tip strong { font-weight: 600; color: var(--navy); }
+.typePicker { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.typePicker button { display: flex; align-items: center; gap: 14px; text-align: left; background: white; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 17px; font: inherit; }
+.typePicker button[aria-pressed="true"] { border: 2px solid var(--primary); padding: 16px; background: rgba(var(--primary-rgb), .05); color: var(--navy); }
+.typePicker strong, .typePicker small { display: block; }
+.typePicker small { font-size: 13px; color: var(--text-secondary); }
+.dropZone { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 20px; text-align: center; border: 2px dashed #9bbac0; border-radius: 14px; background: #f8fbfc; min-width: 0; }
+.dropZone[data-dragging="true"] { border-color: var(--primary); background: rgba(var(--primary-rgb), .08); }
+.dropZone > svg { color: var(--primary); }
+.dropZone strong { max-width: 100%; overflow-wrap: anywhere; font-size: 18px; color: var(--navy); }
+.dropZone :is(p, small) { color: var(--text-secondary); font-size: 14px; }
+.helper { font-size: 14px; font-weight: 400; color: var(--text-secondary); }
+.optional { border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
+.optional summary { padding: 18px; cursor: pointer; font-weight: 700; }
+.optional summary svg { vertical-align: middle; margin-right: 6px; }
+.optional summary span { font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-left: 10px; }
+.optionalBody { border-top: 1px solid var(--border); padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; overflow-wrap: anywhere; min-width: 0; }
+.optionalBody input[type="file"] { max-width: 100%; font: 14px var(--font-sans); }
+.optionalBody :global(.btn) { white-space: normal; max-width: 100%; }
+.optionalBody input[type="file"]::file-selector-button { min-height: 44px; background: var(--bg-light); color: var(--navy); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+.homeworkToggle { display: flex; gap: 12px; padding: 18px; cursor: pointer; align-items: center; }
+.homeworkToggle input { width: 20px; height: 20px; accent-color: var(--primary); flex-shrink: 0; }
+.homeworkToggle small { display: block; font-size: 14px; font-weight: 400; color: var(--text-secondary); }
+.resource { display: flex; align-items: center; gap: 8px; }
+.resource > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.videoList { display: grid; gap: 20px; }
+.videoRow { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 30px; background: var(--surface); border-top: 1px solid var(--border); }
+.actions { display: flex; gap: 10px; align-items: center; }
+.textButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; background: transparent; color: var(--primary-hover); font: 600 15px var(--font-sans); min-height: 44px; padding: 4px 7px; }
+.error { border: 1px solid #f0b7b4; border-radius: 10px; background: #fff3f2; color: #9f2922; padding: 12px 15px; font-size: 15px; margin: 12px 0 18px; overflow-wrap: anywhere; }
+.uploadProgress { display: grid; gap: 8px; margin-top: 20px; color: var(--primary-hover); }
+.uploadProgress progress { width: 100%; height: 10px; accent-color: var(--primary); }
+.review { border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 12px; padding: 26px; overflow-wrap: anywhere; }
+.review h3 { font-size: 25px; margin: 10px 0; letter-spacing: -.03em; }
+.description { white-space: pre-wrap; color: var(--text-secondary); }
+.review dl { display: grid; gap: 16px; margin-top: 24px; }
+.review dt { color: var(--text-secondary); font-size: 13px; }
+.review dd { margin: 2px 0 0; font-weight: 600; white-space: pre-wrap; }
+.helpButton { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: white; color: var(--navy); cursor: pointer; font: 600 14px var(--font-sans); }
+.tourBody { display: grid; grid-template-columns: 230px minmax(0, 1fr); }
+.tourIllustration { margin: 0 0 30px 30px; border-radius: 16px; padding: 32px 22px; background: var(--navy); color: var(--accent-bright); display: flex; flex-direction: column; gap: 24px; justify-content: center; }
+.tourIllustration > span { font: 600 27px/1.35 var(--font-heading); letter-spacing: -.04em; }
+.tourPath { display: flex; gap: 8px; }
+.tourPath > span { display: grid; place-items: center; height: 29px; width: 29px; border-radius: 50%; border: 1px solid #5d7d83; color: #c7d5d8; font-size: 13px; }
+.tourPath [data-active="true"] { background: var(--accent-bright); color: var(--navy); border-color: var(--accent-bright); }
+.tourContent { padding: 6px 30px 30px; }
+.tourContent > h2 { margin: 13px 0; }
+.tourContent > p:not(.error) { color: var(--text-secondary); }
+.tourInstructions { margin: 22px 0 0; padding-left: 23px; display: grid; gap: 14px; }
+.tourInstructions li { padding-left: 6px; }
+.tourInstructions li::marker { font-weight: 700; color: var(--primary); }
+@media (max-width: 640px) {
+  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 16px; }
+  .composerHeader, .tourHeader, .composerBody { padding: 18px; }
+  .steps { padding: 12px 18px 0; gap: 8px; }
+  .steps button { font-size: 12px; gap: 5px; flex-direction: column; align-items: flex-start; width: 100%; }
+  .steps button > span { width: 25px; height: 25px; }
+  .footer { padding: 14px 16px; flex-wrap: wrap; }
+  .footer > .textButton { font-size: 14px; }
+  .actions { gap: 7px; }
+  .actions :global(.btn) { padding: 10px 12px; font-size: 14px; min-height: 44px; }
+  .typePicker button { padding: 13px 10px; gap: 8px; }
+  .typePicker button[aria-pressed="true"] { padding: 12px 9px; }
+  .typePicker small { font-size: 12px; }
+  .optional summary span { display: block; margin: 6px 0 0 26px; }
+  .optionalBody { padding: 14px; }
+  .videoRow { grid-template-columns: minmax(0, 1fr) auto; }
+  .videoRow > .field:first-child { grid-column: 1 / -1; }
+  .review { padding: 18px; }
+  .tourBody { grid-template-columns: minmax(0, 1fr); }
+  .tourIllustration { margin: 0 18px 20px; padding: 20px; display: grid; grid-template-columns: auto 1fr; gap: 12px 16px; align-items: center; }
+  .tourIllustration > span { font-size: 23px; }
+  .tourPath { grid-column: 2; }
+  .tourContent { padding: 0 22px 24px; }
+  .helpButton { padding: 8px 10px; }
+  .helpButton span { display: none; }
+}
+
+.typePicker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .typePicker { grid-template-columns: minmax(0, 1fr); } }
+
+.exitActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+@media (max-width: 640px) { .footer { flex-wrap: wrap; } .exitActions { order: 2; width: 100%; justify-content: space-between; } .footer > .actions { margin-left: auto; } }

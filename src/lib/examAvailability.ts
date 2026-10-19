@@ -22,7 +22,7 @@ export async function getCourseExams(courseId: number, userId: number) {
   const [rows] = await pool.execute<(RowDataPacket & Omit<ExamDetails, 'curso_nombre'> & {
     mi_calificacion: number | null; intento_fecha: Date | null; permite_reintento: number; entrega_requisito_id: number | null;
   })[]>(
-    `SELECT e.*, i.calificacion AS mi_calificacion, i.finalizado_at AS intento_fecha,
+    `SELECT e.*, i.calificacion AS mi_calificacion, CASE WHEN i.calificacion IS NOT NULL THEN i.finalizado_at ELSE NULL END AS intento_fecha,
             COALESCE(i.permite_reintento, 0) AS permite_reintento,
             c.titulo AS clase_requisito_titulo, t.id AS entrega_requisito_id
      FROM examenes e

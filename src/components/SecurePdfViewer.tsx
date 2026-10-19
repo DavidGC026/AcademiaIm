@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { toAbsoluteAssetUrl } from '@/lib/assetUrl';
 import { openPdfDocument } from '@/lib/pdfLoader';
+import { useModalFocus } from '@/lib/useModalFocus';
 
 interface SecurePdfViewerProps {
   fileUrl?: string | null;
@@ -17,22 +18,20 @@ interface SecurePdfViewerProps {
 type PdfDoc = Awaited<ReturnType<typeof openPdfDocument>>;
 
 const LOAD_TIMEOUT_MS = 30000;
+const MAX_RENDER_PIXELS = 20_000_000;
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(v, max));
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(message)), ms);
-    }),
-  ]);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
 }
 
 function isPdfBuffer(data: ArrayBuffer): boolean {
   return new TextDecoder().decode(data.slice(0, 5)).startsWith('%PDF-');
 }
 
-// ponytail: canvas + pdf.js; zoom vía CSS scale dentro de caja fija (no redimensiona la página).
 export default function SecurePdfViewer({
   fileUrl,
   localFile,
@@ -48,6 +47,8 @@ export default function SecurePdfViewer({
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [targetZoom, setTargetZoom] = useState(1);
+  const [renderedZoom, setRenderedZoom] = useState(1);
   const [pageSize, setPageSize] = useState({ w: 0, h: 0 });
   const [loading, setLoading] = useState(true);
   const [rendering, setRendering] = useState(false);
@@ -55,6 +56,15 @@ export default function SecurePdfViewer({
   const [docReady, setDocReady] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedH, setExpandedH] = useState(720);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const expandButtonRef = useRef<HTMLButtonElement>(null);
+  const wasExpanded = useRef(false);
+  useModalFocus(dialogRef, isExpanded);
+  useEffect(() => {
+    // Moving the viewer into a portal replaces its original trigger DOM node.
+    if (wasExpanded.current && !isExpanded) expandButtonRef.current?.focus();
+    wasExpanded.current = isExpanded;
+  }, [isExpanded]);
 
   const shellH = isExpanded ? expandedH : maxHeight;
 
@@ -64,6 +74,13 @@ export default function SecurePdfViewer({
 
   useEffect(() => {
     zoomRef.current = zoom;
+  }, [zoom]);
+
+  // El gesto responde de inmediato con CSS y, al detenerse, PDF.js redibuja
+  // la página a la resolución real del zoom para recuperar la nitidez.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTargetZoom(zoom), 140);
+    return () => window.clearTimeout(timer);
   }, [zoom]);
 
   // Ctrl+rueda / pinch del trackpad → zoom solo aquí, no en toda la página.
@@ -125,10 +142,14 @@ export default function SecurePdfViewer({
 
   useEffect(() => {
     if (!isExpanded) return;
-    const update = () => setExpandedH(Math.max(400, window.innerHeight - 48));
+    const update = () => setExpandedH(Math.max(320, window.visualViewport?.height || window.innerHeight));
     update();
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    window.visualViewport?.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('resize', update);
+    };
   }, [isExpanded]);
 
   useEffect(() => {
@@ -147,6 +168,9 @@ export default function SecurePdfViewer({
 
   useEffect(() => {
     let cancelled = false;
+    let acceptDocument = true;
+    let openedDoc: PdfDoc | null = null;
+    const controller = new AbortController();
 
     (async () => {
       setLoading(true);
@@ -154,7 +178,6 @@ export default function SecurePdfViewer({
       setPage(1);
       setTotalPages(0);
       setPageSize({ w: 0, h: 0 });
-      void docRef.current?.cleanup?.();
       docRef.current = null;
 
       try {
@@ -163,7 +186,7 @@ export default function SecurePdfViewer({
           data = await localFile.arrayBuffer();
         } else if (fileUrl) {
           const res = await withTimeout(
-            fetch(toAbsoluteAssetUrl(fileUrl), { credentials: 'include' }),
+            fetch(toAbsoluteAssetUrl(fileUrl), { credentials: 'include', signal: controller.signal }),
             LOAD_TIMEOUT_MS,
             'Tiempo de espera agotado al descargar el PDF'
           );
@@ -179,13 +202,17 @@ export default function SecurePdfViewer({
         }
 
         const doc = await withTimeout(
-          openPdfDocument({ data }),
+          openPdfDocument({ data }).then((loaded) => {
+            if (!acceptDocument) void loaded.loadingTask.destroy().catch(() => {});
+            return loaded;
+          }),
           LOAD_TIMEOUT_MS,
           'Tiempo de espera agotado al procesar el PDF'
         );
+        openedDoc = doc;
 
         if (cancelled) {
-          void doc.cleanup();
+          void doc.loadingTask.destroy().catch(() => {});
           return;
         }
 
@@ -193,8 +220,12 @@ export default function SecurePdfViewer({
         setTotalPages(doc.numPages);
         setPage(1);
         setZoom(1);
+        setTargetZoom(1);
+        setRenderedZoom(1);
         setDocReady((n) => n + 1);
       } catch (e: unknown) {
+        acceptDocument = false;
+        controller.abort();
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Error al cargar el PDF');
         }
@@ -205,8 +236,10 @@ export default function SecurePdfViewer({
 
     return () => {
       cancelled = true;
-      void docRef.current?.cleanup?.();
-      docRef.current = null;
+      acceptDocument = false;
+      controller.abort();
+      void openedDoc?.loadingTask.destroy().catch(() => {});
+      if (docRef.current === openedDoc) docRef.current = null;
     };
   }, [fileUrl, localFile]);
 
@@ -226,20 +259,31 @@ export default function SecurePdfViewer({
 
         const baseVp = pdfPage.getViewport({ scale: 1 });
         const scrollEl = scrollRef.current;
-        const viewH = scrollEl ? scrollEl.clientHeight - 40 : 400;
-        const viewW = scrollEl ? scrollEl.clientWidth - (showSideNav ? 112 : 40) : 600;
+        const scrollStyle = scrollEl ? window.getComputedStyle(scrollEl) : null;
+        const horizontalInset = scrollStyle
+          ? parseFloat(scrollStyle.paddingLeft) + parseFloat(scrollStyle.paddingRight)
+          : 40;
+        const verticalInset = scrollStyle
+          ? parseFloat(scrollStyle.paddingTop) + parseFloat(scrollStyle.paddingBottom)
+          : 40;
+        const viewH = scrollEl ? scrollEl.clientHeight - verticalInset : 400;
+        const viewW = scrollEl ? scrollEl.clientWidth - horizontalInset : 600;
         const fitScale = Math.min(viewH / baseVp.height, viewW / baseVp.width);
+        const displayW = Math.max(1, Math.floor(baseVp.width * fitScale));
+        const displayH = Math.max(1, Math.floor(baseVp.height * fitScale));
+        const zoomedW = Math.max(1, Math.floor(displayW * targetZoom));
+        const zoomedH = Math.max(1, Math.floor(displayH * targetZoom));
         const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
-        const scale = clamp(fitScale * dpr, 0.5, 6);
+        const pixelRatioLimit = Math.sqrt(MAX_RENDER_PIXELS / (zoomedW * zoomedH));
+        const renderPixelRatio = clamp(Math.min(dpr, pixelRatioLimit), 0.6, 2);
+        const scale = clamp(fitScale * targetZoom * renderPixelRatio, 0.5, 10);
         const vp = pdfPage.getViewport({ scale });
 
-        const displayW = Math.floor(vp.width / dpr);
-        const displayH = Math.floor(vp.height / dpr);
-
+        setRenderedZoom(targetZoom);
         canvas.width = Math.floor(vp.width);
         canvas.height = Math.floor(vp.height);
-        canvas.style.width = `${displayW}px`;
-        canvas.style.height = `${displayH}px`;
+        canvas.style.width = `${zoomedW}px`;
+        canvas.style.height = `${zoomedH}px`;
 
         const ctx = canvas.getContext('2d', { alpha: false });
         if (!ctx) throw new Error('No se pudo inicializar el lienzo');
@@ -250,7 +294,9 @@ export default function SecurePdfViewer({
         renderTask = pdfPage.render({ canvasContext: ctx, viewport: vp, canvas });
         await renderTask.promise;
 
-        if (!cancelled) setPageSize({ w: displayW, h: displayH });
+        if (!cancelled) {
+          setPageSize({ w: displayW, h: displayH });
+        }
       } catch (e: unknown) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Error al renderizar la página');
@@ -264,7 +310,7 @@ export default function SecurePdfViewer({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [page, docReady, loading, totalPages, showSideNav, isExpanded]);
+  }, [page, docReady, loading, totalPages, showSideNav, isExpanded, targetZoom, shellH]);
 
   const goPrev = useCallback(() => {
     setPage((p) => Math.max(1, p - 1));
@@ -320,6 +366,7 @@ export default function SecurePdfViewer({
         <button
           type="button"
           disabled={loading}
+          ref={expandButtonRef}
           onClick={() => setIsExpanded((v) => !v)}
           aria-label={isExpanded ? 'Salir de pantalla completa' : 'Pantalla completa'}
           title={isExpanded ? 'Salir de pantalla completa' : 'Pantalla completa'}
@@ -370,16 +417,16 @@ export default function SecurePdfViewer({
             >
               <div
                 style={{
-                  transform: `scale(${zoom})`,
+                  transform: `scale(${zoom / Math.max(renderedZoom, 0.01)})`,
                   transformOrigin: 'top left',
-                  width: pageSize.w || '100%',
-                  height: pageSize.h || '100%',
+                  width: pageSize.w ? Math.ceil(pageSize.w * renderedZoom) : '100%',
+                  height: pageSize.h ? Math.ceil(pageSize.h * renderedZoom) : '100%',
                   background: '#fff',
                   borderRadius: '4px',
                   boxShadow: '0 4px 20px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.06)',
                   lineHeight: 0,
                   opacity: rendering ? 0.85 : 1,
-                  transition: 'opacity 0.15s ease',
+                  transition: 'opacity 0.15s ease, transform 0.12s ease-out',
                 }}
               >
                 <canvas ref={canvasRef} style={{ display: 'block', userSelect: 'none', WebkitUserSelect: 'none' }} aria-label={title} />
@@ -399,6 +446,9 @@ export default function SecurePdfViewer({
   if (isExpanded && typeof document !== 'undefined') {
     return createPortal(
       <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="pdf-viewer-overlay"
         style={{
           position: 'fixed',
           inset: 0,
@@ -406,7 +456,7 @@ export default function SecurePdfViewer({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '24px',
+          padding: 0,
         }}
         role="dialog"
         aria-modal="true"
@@ -427,7 +477,7 @@ export default function SecurePdfViewer({
             WebkitBackdropFilter: 'blur(10px)',
           }}
         />
-        <div style={{ position: 'relative', width: '100%', maxWidth: '1400px', height: expandedH, zIndex: 1 }}>
+        <div className="pdf-viewer-overlay-content" style={{ position: 'relative', width: '100%', height: expandedH, zIndex: 1 }}>
           {viewer}
         </div>
       </div>,

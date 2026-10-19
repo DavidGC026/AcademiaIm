@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { getSession } from '@/lib/auth';
 import { ensureExamReleaseSchema } from '@/lib/examSchema';
 import { getCourseExams } from '@/lib/examAvailability';
 import { estudiantePuedeAccederCurso } from '@/lib/cursoGrupos';
+import { validatePreguntasMostrar } from '@/lib/examenPreguntas';
 
 export async function GET(request: Request) {
   try {
@@ -44,12 +45,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    const { curso_id, titulo, descripcion, limite_tiempo, preguntas } = await request.json();
+    const { curso_id, titulo, descripcion, limite_tiempo, preguntas, preguntas_mostrar } = await request.json();
 
-    if (!curso_id || !titulo || !preguntas || !Array.isArray(preguntas)) {
+    if (!curso_id || typeof titulo !== 'string' || !titulo || !preguntas || !Array.isArray(preguntas)) {
       return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
     }
 
+    if (!titulo.trim() || !preguntas.length || preguntas.some(q => !q.pregunta?.trim() || !Array.isArray(q.opciones) || q.opciones.length < 2 || q.opciones.some((option: { texto?: string }) => !option.texto?.trim()) || q.opciones.filter((option: { es_correcta?: boolean }) => option.es_correcta).length !== 1)) {
+      return NextResponse.json({ error: 'El examen necesita título y preguntas con al menos dos opciones y una sola respuesta correcta.' }, { status: 400 });
+    }
+    let count: number;
+    try { count = validatePreguntasMostrar(preguntas_mostrar, preguntas.length); }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+    const minutes = Number(limite_tiempo ?? 0);
+    if (!Number.isSafeInteger(minutes) || minutes < 0 || minutes > 2147483647) return NextResponse.json({ error: 'El tiempo debe ser un entero de minutos (0 para sin límite).' }, { status: 400 });
     const [courses] = await pool.execute<RowDataPacket[]>(
       'SELECT creado_por_id FROM cursos WHERE id = ?', [curso_id],
     );
@@ -62,18 +71,18 @@ export async function POST(request: Request) {
     await connection.beginTransaction();
     transactionStarted = true;
 
-    const [examResult] = await connection.execute(
-      `INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, modo_liberacion) VALUES (?, ?, ?, ?, 'bloqueado')`,
-      [curso_id, titulo, descripcion || '', limite_tiempo || 0]
-    ) as any[];
+    const [examResult] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO examenes (curso_id, titulo, descripcion, limite_tiempo, preguntas_mostrar, modo_liberacion) VALUES (?, ?, ?, ?, ?, 'bloqueado')`,
+      [curso_id, titulo.trim(), descripcion || '', minutes, count]
+    );
 
     const examenId = examResult.insertId;
 
     for (const q of preguntas) {
-      const [qResult] = await connection.execute(
+      const [qResult] = await connection.execute<ResultSetHeader>(
         `INSERT INTO preguntas (examen_id, pregunta, tipo) VALUES (?, ?, ?)`,
         [examenId, q.pregunta, q.tipo || 'opcion_multiple']
-      ) as any[];
+      );
 
       const preguntaId = qResult.insertId;
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { cleanText } from '@/lib/sanitize';
 
 export async function GET(request: Request) {
   try {
@@ -40,14 +41,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
-    const { curso_id, contenido, post_padre_id } = await request.json();
+    const { curso_id, contenido: contenidoRaw, post_padre_id } = await request.json();
 
+    const contenido = cleanText(contenidoRaw, 5000);
     if (!curso_id || !contenido) {
       return NextResponse.json({ error: 'Contenido y curso_id son obligatorios' }, { status: 400 });
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO foro_posts (curso_id, usuario_id, post_padre_id, contenido) 
+      `INSERT INTO foro_posts (curso_id, usuario_id, post_padre_id, contenido)
        VALUES (?, ?, ?, ?)`,
       [curso_id, session.userId, post_padre_id || null, contenido]
     ) as any[];
