@@ -6,7 +6,7 @@ const scope = { campus: '/Academia', userId: 21, courseId: 7, classId: 3 };
 const content: ClassDraftContent = {
   step: 1, title: 'Clase pendiente', description: 'Trabajo en curso', contentType: 'materiales',
   presentation: { ref: 'clase/abc.pdf', name: 'presentacion.pdf' },
-  videos: [{ titulo: 'Repaso', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }],
+  videos: [{ titulo: 'Repaso', url: 'https://www.youtube.com/watch?v=I9UoJ287ysE' }],
   sections: [{ id: 'sec-1', nombre: 'Lecturas', color: '#0073A5', orden: 0, permite_descarga: false, items: [
     { tipo: 'archivo', nombre: 'Guía', url: '/uploads/guia.pdf', archivo_nombre: 'guia.pdf', portada: '/uploads/portada.jpg' },
     { tipo: 'video', titulo: 'Ensayo', url: '/uploads/ensayo.mp4', archivo_nombre: 'ensayo.mp4' },

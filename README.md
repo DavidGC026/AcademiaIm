@@ -67,6 +67,21 @@ La configuración de IA es exclusiva de administración. Para OpenAI puede usars
 guardada desde el panel. No guardar claves en Git. Sin conexión configurada, el
 asistente conserva orientación sobre la plataforma y avisa al pedir explicaciones.
 
+## Entrevistas técnicas
+
+El catálogo inicial usa las siete entrevistas reales de
+[Líderes de la construcción de Webinars](https://webinars.webinarsenconcreto.com/lideres-de-la-construccion.php),
+verificadas el 2026-10-19 en el canal IMCYC. `src/data/webinars-interviews.json`
+conserva nombres, videos, descripciones y duraciones comprobadas; no atribuye
+cargos que la fuente no proporciona. Los campos opcionales vacíos no se muestran.
+
+Con el entorno del campus cargado y respaldo previo de `biblioteca_entrevistas`,
+`pnpm sync:interviews` retira los marcadores antiguos e incorpora los videos que
+faltan. Es una operación explícita de contenido, separada del despliegue y de las
+migraciones de esquema. Conserva otras entrevistas y ediciones de administración;
+repetirla no duplica los videos. `INTERVIEWS_QA=1 pnpm test:interviews` verifica
+este comportamiento en una tabla temporal de una base local terminada en `_qa`.
+
 ## Paneles y contraseñas
 
 El maestro administra sus materias desde **Mis materias** (`/maestro/materias`)

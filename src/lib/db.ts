@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 import bcrypt from 'bcryptjs';
+import { webinarsInterviews } from './webinarsInterviews';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
@@ -194,9 +195,9 @@ export async function initDb() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         titulo VARCHAR(255) NOT NULL,
         experto VARCHAR(255) NOT NULL,
-        cargo VARCHAR(255) NOT NULL,
+        cargo VARCHAR(255) NOT NULL DEFAULT '',
         video_url VARCHAR(500) NOT NULL,
-        duracion VARCHAR(100) DEFAULT '10:00 min',
+        duracion VARCHAR(100) DEFAULT '',
         descripcion TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -251,15 +252,13 @@ export async function initDb() {
       `);
     }
 
-    const [entrevistas] = await pool.execute('SELECT id FROM biblioteca_entrevistas LIMIT 1') as any[];
+    const [entrevistas] = await pool.execute<RowDataPacket[]>('SELECT id FROM biblioteca_entrevistas LIMIT 1');
     if (entrevistas.length === 0) {
-      console.log('Sembrando entrevistas iniciales...');
-      await pool.execute(`
-        INSERT INTO biblioteca_entrevistas (titulo, experto, cargo, video_url, duracion, descripcion)
-        VALUES 
-        ('La Evolución del Concreto Sustentable en América Latina', 'Dr. Humberto Balandrano', 'Director de Investigación de Materiales, IMCYC', 'https://www.youtube.com/embed/F429Z5dF_vU', '18:45 min', 'Una entrevista profunda sobre la reducción de la huella de carbono en la producción del clínker y el uso de aditivos de última generación.'),
-        ('Patología y Durabilidad de Estructuras de Concreto', 'M. en I. Ricardo Sánchez', 'Consultor Senior en Estructivas Masivas', 'https://www.youtube.com/embed/2_HjZkC6H7I', '24:10 min', 'Charla magistral enfocada en la prevención de la corrosión por cloruros en zonas costeras y métodos de reparación estructural.')
-      `);
+      await pool.execute(
+        'INSERT INTO biblioteca_entrevistas (titulo, experto, cargo, video_url, duracion, descripcion) VALUES '
+          + webinarsInterviews.map(() => '(?, ?, ?, ?, ?, ?)').join(', '),
+        webinarsInterviews.flatMap((item) => [item.titulo, item.experto, item.cargo, item.video_url, item.duracion, item.descripcion]),
+      );
     }
 
     // 6. Tablas de grupos / cohortes y solicitudes de acceso

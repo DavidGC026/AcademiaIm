@@ -17,7 +17,9 @@
     "migrate:campus": "tsx scripts/migrate-campus.ts --apply",
     "test:assistant": "tsx --test tests/academic-assistant-context.integration.ts",
     "test:sessions": "tsx --test tests/campus-sessions.integration.ts",
-    "test:assistant-config": "tsx --test tests/assistant-config.integration.ts"
+    "test:assistant-config": "tsx --test tests/assistant-config.integration.ts",
+    "sync:interviews": "tsx scripts/sync-webinars-interviews.ts --apply",
+    "test:interviews": "tsx --test tests/interviews.integration.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -213,9 +213,9 @@ CREATE TABLE IF NOT EXISTS biblioteca_entrevistas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     titulo VARCHAR(255) NOT NULL,
     experto VARCHAR(255) NOT NULL,
-    cargo VARCHAR(255) NOT NULL,
+    cargo VARCHAR(255) NOT NULL DEFAULT '',
     video_url VARCHAR(500) NOT NULL,
-    duracion VARCHAR(100) DEFAULT '10:00 min',
+    duracion VARCHAR(100) DEFAULT '',
     descripcion TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

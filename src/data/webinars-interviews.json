@@ -1,0 +1,69 @@
+{
+  "source": "https://webinars.webinarsenconcreto.com/lideres-de-la-construccion.php",
+  "verifiedAt": "2026-10-19",
+  "interviews": [
+    {
+      "source_id": 1,
+      "titulo": "Entrevista con Dr. Rodolfo Valles",
+      "experto": "Dr. Rodolfo Valles",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=I9UoJ287ysE",
+      "duracion": "1:10:40",
+      "descripcion": "Ingeniero civil por la UNAM y doctor por la Universidad del Estado de Nueva York en Búfalo. Su trayectoria incluye el diseño de estructuras de concreto reforzado, concreto postensado, acero y sistemas híbridos en proyectos como Torre Mayor y Torre Reforma."
+    },
+    {
+      "source_id": 2,
+      "titulo": "Entrevista con Ing. Mario López Rodríguez",
+      "experto": "Ing. Mario López Rodríguez",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=sQMTSSp0VU0",
+      "duracion": "1:15:56",
+      "descripcion": "Entrevista de la serie Líderes de la construcción con el Ing. Mario López Rodríguez."
+    },
+    {
+      "source_id": 3,
+      "titulo": "Entrevista con Ing. Ricardo Pérez Schulz",
+      "experto": "Ing. Ricardo Pérez Schulz",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=nvtFsV8-F5U",
+      "duracion": "49:03",
+      "descripcion": "Arquitecto por la UNAM, con formación en Mercadotecnia y Alta Dirección. Cuenta con experiencia en comercialización y distribución de productos y soluciones constructivas, planeación estratégica e infraestructura."
+    },
+    {
+      "source_id": 4,
+      "titulo": "Entrevista con Ing. Sergio M. Alcocer Martínez de Castro",
+      "experto": "Ing. Sergio M. Alcocer Martínez de Castro",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=pRCvfYHdAfo",
+      "duracion": "1:03:40",
+      "descripcion": "Entrevista de la serie Líderes de la construcción con el Ing. Sergio M. Alcocer Martínez de Castro."
+    },
+    {
+      "source_id": 5,
+      "titulo": "Entrevista con Ing. Juan A. García Merodio",
+      "experto": "Ing. Juan A. García Merodio",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=ZBGmJInbcw0",
+      "duracion": "54:05",
+      "descripcion": "Entrevista de la serie Líderes de la construcción con el Ing. Juan A. García Merodio."
+    },
+    {
+      "source_id": 6,
+      "titulo": "Entrevista con Rolf Hans Manser Sonderer",
+      "experto": "Rolf Hans Manser Sonderer",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=mwxDYOUbCzc",
+      "duracion": "54:35",
+      "descripcion": "Ingeniero químico por la Universidad del Valle de Cali, con estudios doctorales en ETH-Zürich y formación en alta dirección. Su semblanza reúne experiencia en planeación estratégica, negociación, desarrollo organizacional y operaciones de MAPEI en América Latina."
+    },
+    {
+      "source_id": 7,
+      "titulo": "Entrevista con Ing. Diana Zamora G.",
+      "experto": "Ing. Diana Zamora G.",
+      "cargo": "",
+      "video_url": "https://www.youtube.com/watch?v=5S7K87e86b0",
+      "duracion": "38:42",
+      "descripcion": "Ingeniera Química Industrial por el IPN, con Maestría en Calidad y Estadística Aplicada. Su semblanza describe experiencia en evaluación de la conformidad, certificación, ensayos de aptitud, normalización y sistemas de gestión para la construcción."
+    }
+  ]
+}

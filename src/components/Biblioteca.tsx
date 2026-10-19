@@ -51,9 +51,9 @@ interface Interview {
   id: number;
   titulo: string;
   experto: string;
-  cargo: string;
+  cargo?: string | null;
   video_url: string;
-  duracion: string;
+  duracion?: string | null;
   descripcion: string;
 }
 
@@ -117,7 +117,7 @@ export default function BibliotecaComponent() {
     experto: '',
     cargo: '',
     video_url: '',
-    duracion: '10:00 min',
+    duracion: '',
     descripcion: ''
   });
 
@@ -378,7 +378,7 @@ export default function BibliotecaComponent() {
       experto: '',
       cargo: '',
       video_url: '',
-      duracion: '10:00 min',
+      duracion: '',
       descripcion: ''
     });
     setInvestigacionForm({
@@ -430,10 +430,10 @@ export default function BibliotecaComponent() {
       setInterviewForm({
         titulo: item.titulo,
         experto: item.experto,
-        cargo: item.cargo,
+        cargo: item.cargo || '',
         video_url: item.video_url,
-        duracion: item.duracion,
-        descripcion: item.descripcion
+        duracion: item.duracion || '',
+        descripcion: item.descripcion || ''
       });
     } else {
       setInvestigacionForm({
@@ -835,19 +835,24 @@ export default function BibliotecaComponent() {
                       <div style={styles.videoPlaceholderCard}>
                         <iframe
                           src={int.video_url}
+                          title={`${int.titulo} — ${int.experto}`}
                           style={styles.videoIframe}
+                          loading="lazy"
+                          referrerPolicy="strict-origin-when-cross-origin"
                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                           allowFullScreen
                         />
                       </div>
                       <div style={styles.interviewInfo}>
-                        <div style={styles.durationBadge}>
-                          <Video size={12} /> {int.duracion}
-                        </div>
+                        {int.duracion?.trim() && (
+                          <div style={styles.durationBadge}>
+                            <Video size={12} /> {int.duracion}
+                          </div>
+                        )}
                         <h3 style={styles.interviewTitle}>{int.titulo}</h3>
                         <div style={styles.expertBlock}>
                           <strong>{int.experto}</strong>
-                          <span>{int.cargo}</span>
+                          {int.cargo?.trim() && <span>{int.cargo}</span>}
                         </div>
                         <p style={styles.interviewDesc}>{int.descripcion}</p>
                       </div>
@@ -1340,7 +1345,7 @@ export default function BibliotecaComponent() {
                       />
                     </div>
                     <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Duración</label>
+                      <label className="form-label">Duración (opcional)</label>
                       <input 
                         type="text" 
                         className="form-input" 
@@ -1352,14 +1357,13 @@ export default function BibliotecaComponent() {
                   </div>
 
                   <div className="form-group" style={{ marginTop: '16px' }}>
-                    <label className="form-label">Cargo / Afiliación del Experto</label>
+                    <label className="form-label">Cargo / Afiliación del Experto (opcional)</label>
                     <input 
                       type="text" 
                       className="form-input" 
                       value={interviewForm.cargo} 
                       onChange={(e) => setInterviewForm({ ...interviewForm, cargo: e.target.value })} 
                       placeholder="Ej. Catedrático e Investigador de Materiales, UNAM"
-                      required 
                     />
                   </div>
 
